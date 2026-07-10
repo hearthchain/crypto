@@ -1,0 +1,23 @@
+[package]
+name = "hearth"
+version = "0.1.0"
+edition = "2024"
+description = "Ed25519 + ECVRF (RFC 9381) + BLS derivation crypto library, pure Rust"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# edwards25519 group/scalar arithmetic (the VRF math) + Ed25519 signatures.
+curve25519-dalek = "4"
+ed25519-dalek = "2"
+# hashing / MAC.
+sha2 = "0.10"
+hmac = "0.12"
+# BLS12-381 scalar-field arithmetic for EIP-2333 (mod r).
+num-bigint = "0.4"
+num-traits = "0.2"
+# BIP-39 NFKD normalization.
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+# the sample app (examples/hearth-demo.rs) only.
+base64 = "0.22"

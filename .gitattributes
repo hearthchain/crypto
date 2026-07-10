@@ -1,0 +1,8 @@
+# The BIP-39 English wordlist is a fixed, standardized asset embedded by every
+# implementation. Force LF everywhere so the byte content (and its SHA-256) stays
+# identical across platforms — the wordlist-checksum guards depend on this.
+**/bip39/english.txt text eol=lf
+go/hearth/english.txt  text eol=lf
+python/src/hearth/data/english.txt text eol=lf
+rust/src/english.txt   text eol=lf
+typescript/src/english.txt text eol=lf

@@ -1,0 +1,3 @@
+# Built binaries (module builds to the cmd name)
+/hearth-demo
+*.exe

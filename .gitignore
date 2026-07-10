@@ -1,0 +1,4 @@
+# Editor / OS (language build artifacts are ignored in scala/ and python/)
+.idea/
+.vscode/
+.DS_Store
