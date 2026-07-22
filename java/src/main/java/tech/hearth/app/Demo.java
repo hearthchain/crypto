@@ -11,6 +11,8 @@ import tech.hearth.crypto.Ecvrf;
 import tech.hearth.crypto.Ed25519;
 import tech.hearth.crypto.Hex;
 import tech.hearth.crypto.KeyTree;
+import tech.hearth.crypto.SigningKey;
+import tech.hearth.crypto.VrfKey;
 
 /**
  * Sample app for the hearth-chain crypto stack. Derives distinct signing / VRF /
@@ -48,15 +50,16 @@ public final class Demo {
         // (1) Derive keys — one mnemonic, separate per-role / per-curve trees
         section("1) Key derivation (one mnemonic -> distinct signing / VRF / BLS keys)");
         byte[] seed = Bip39.toSeed(mnemonic);
-        Ed25519.KeyPair signing = KeyTree.signingKey(seed, ACCOUNT);
-        Ed25519.KeyPair vrf = KeyTree.vrfKey(seed, ACCOUNT);
+        SigningKey signing = KeyTree.signingKey(seed, ACCOUNT);
+        VrfKey vrf = KeyTree.vrfKey(seed, ACCOUNT);
         byte[] blsSk = KeyTree.blsSecretKey(seed, ACCOUNT);
         System.out.println("BIP-39 seed    : " + Hex.encode(seed));
         System.out.println();
         System.out.println("signing path   : " + KeyTree.signingPath(ACCOUNT));
         System.out.println("signing pubkey : " + Hex.encode(signing.publicKey()));
-        System.out.println("address (main) : " + Address.fromPublicKey(signing.publicKey(), Address.Network.MAINNET));
-        System.out.println("address (test) : " + Address.fromPublicKey(signing.publicKey(), Address.Network.TESTNET));
+        Address address = signing.toAddress();
+        System.out.println("address (main) : " + address.toBech32(Address.Network.MAINNET));
+        System.out.println("address (test) : " + address.toBech32(Address.Network.TESTNET));
         System.out.println();
         System.out.println("VRF path       : " + KeyTree.vrfPath(ACCOUNT));
         System.out.println("VRF pubkey     : " + Hex.encode(vrf.publicKey()) + "  (distinct scalar from signing)");
@@ -85,7 +88,7 @@ public final class Demo {
         // (4) VRF sign and derive VRF value with the VRF key
         section("4) ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381) - VRF key");
         byte[] alpha = Base64.getDecoder().decode(alphaB64);
-        Ecvrf.ProveResult result = Ecvrf.prove(vrf.seed(), alpha);
+        Ecvrf.ProveResult result = Ecvrf.prove(vrf, alpha);
         var vrfOk = Ecvrf.verify(vrf.publicKey(), alpha, result.proof().bytes());
         System.out.println("alpha (b64)    : " + alphaB64);
         System.out.println("alpha (hex)    : " + Hex.encode(alpha));

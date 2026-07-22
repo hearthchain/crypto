@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigInteger;
@@ -108,8 +109,8 @@ class CryptoVectorsTest {
         for (Vec v : RFC9381) {
             byte[] seed = hx(v.sk);
             byte[] alpha = hx(v.alpha);
-            assertEquals(v.pk, hex(Ed25519.fromSeed(seed, b).publicKey()), "pubkey");
-            Ecvrf.ProveResult result = Ecvrf.prove(seed, alpha, b);
+            assertEquals(v.pk, hex(VrfKey.fromSeed(seed, b).publicKey()), "pubkey");
+            Ecvrf.ProveResult result = Ecvrf.prove(VrfKey.fromSeed(seed, b), alpha, b);
             assertEquals(v.pi, hex(result.proof().bytes()), "pi");
             assertEquals(v.beta, hex(result.beta()), "beta");
             Optional<byte[]> verified = Ecvrf.verify(hx(v.pk), alpha, hx(v.pi), b);
@@ -124,7 +125,7 @@ class CryptoVectorsTest {
     @ParameterizedTest
     @MethodSource("backends")
     void ed25519SignVerify(CryptoBackend b) {
-        Ed25519.KeyPair kp = Ed25519.fromSeed(hx("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"), b);
+        SigningKey kp = SigningKey.fromSeed(hx("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"), b);
         byte[] msg = "hello hearth".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         byte[] sig = kp.sign(msg, b);
         assertTrue(Ed25519.verify(sig, msg, kp.publicKey(), b));
@@ -193,15 +194,56 @@ class CryptoVectorsTest {
     @Test
     void addressPinned() {
         CryptoBackend b = anyBackend();
-        byte[] pk = hx(DEMO_PK);
-        assertEquals("hrthm1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcj9u36h", Address.fromPublicKey(pk, Address.Network.MAINNET, b));
-        assertEquals("hrtht1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcwumd6m", Address.fromPublicKey(pk, Address.Network.TESTNET, b));
-        String main = Address.fromPublicKey(pk, Address.Network.MAINNET, b);
-        Optional<Address.Parsed> parsed = Address.parse(main);
-        assertTrue(parsed.isPresent());
-        assertEquals(Address.Network.MAINNET, parsed.get().network());
-        assertEquals(20, parsed.get().hash().length);
-        assertTrue(Address.parseFor(main, Address.Network.TESTNET).isEmpty());
+        Address a = Address.fromPublicKey(hx(DEMO_PK), b);
+        // one identity, rendered per network via the HRP.
+        assertEquals("hrthm1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcj9u36h", a.toBech32(Address.Network.MAINNET));
+        assertEquals("hrtht1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcwumd6m", a.toBech32(Address.Network.TESTNET));
+        // parse requires the HRP to match the requested network.
+        assertEquals(a, Address.parse(a.toBech32(Address.Network.MAINNET), Address.Network.MAINNET).orElseThrow());
+        assertTrue(Address.parse(a.toBech32(Address.Network.MAINNET), Address.Network.TESTNET).isEmpty());
+        assertEquals(Address.Network.MAINNET, Address.networkOf(a.toBech32(Address.Network.MAINNET)).orElseThrow());
+    }
+
+    @Test
+    void addressBytesRoundTripAndValueSemantics() {
+        Address a = Address.fromPublicKey(hx(DEMO_PK), anyBackend());
+
+        // 21-byte on-chain form: version(0x00) || 20-byte hash, round-trips.
+        byte[] payload = a.toBytes();
+        assertEquals(Address.PAYLOAD_LEN, payload.length);
+        assertEquals(Address.ED25519_VERSION, payload[0]);
+        assertEquals(a, Address.fromBytes(payload).orElseThrow());
+
+        // network-independent identity: same account on any network is the same Address,
+        // but its bech32m strings differ.
+        Address same = Address.fromBytes(payload.clone()).orElseThrow();
+        assertEquals(a, same);
+        assertEquals(a.hashCode(), same.hashCode());
+        assertNotEquals(a.toBech32(Address.Network.MAINNET), a.toBech32(Address.Network.TESTNET));
+
+        // malformed payloads are rejected.
+        assertTrue(Address.fromBytes(new byte[20]).isEmpty());
+        byte[] badVersion = payload.clone();
+        badVersion[0] = 0x01;
+        assertTrue(Address.fromBytes(badVersion).isEmpty());
+    }
+
+    @Test
+    void signingKeyToAddressAndDefaultNetwork() {
+        SigningKey key = SigningKey.fromSeed(hx("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+        Address addr = key.toAddress(); // network-free identity
+        assertEquals(Address.fromPublicKey(key.publicKey()), addr);
+
+        // no-arg toBech32() uses the process-wide default network.
+        Address.Network.setDefault(Address.Network.TESTNET);
+        assertEquals(addr.toBech32(Address.Network.TESTNET), addr.toBech32());
+        Address.Network.setDefault(Address.Network.MAINNET);
+        assertEquals(addr.toBech32(Address.Network.MAINNET), addr.toBech32());
+
+        // fail-closed when the default is unset.
+        Address.Network.setDefault(null);
+        assertThrows(IllegalStateException.class, addr::toBech32);
+        Address.Network.setDefault(Address.Network.MAINNET);
     }
 
     // --- Cross-parity with the Scala/Python/Go builds --------------------
@@ -213,8 +255,8 @@ class CryptoVectorsTest {
         assertEquals(
                 "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
                 hex(seed));
-        Ed25519.KeyPair signing = KeyTree.signingKey(seed, 0, b);
-        Ed25519.KeyPair vrf = KeyTree.vrfKey(seed, 0, b);
+        SigningKey signing = KeyTree.signingKey(seed, 0, b);
+        VrfKey vrf = KeyTree.vrfKey(seed, 0, b);
         byte[] blsSk = KeyTree.blsSecretKey(seed, 0, b);
         assertEquals("058b96bd967c4ad867eaab255dbce080cb1a45d03cf622caf8c16e4d871b0196", hex(signing.publicKey()));
         assertEquals("06bc4b2bde1b328430ba118192c21980f4a9e7f424ad1fa31604a977c8d31657", hex(vrf.publicKey()));
@@ -238,8 +280,8 @@ class CryptoVectorsTest {
         assertArrayEquals(sodium.signSeedKeypair(seed).publicKey(), jvm.signSeedKeypair(seed).publicKey());
         byte[] sk = jvm.signSeedKeypair(seed).secretKey();
         assertArrayEquals(sodium.signDetached(msg, sk), jvm.signDetached(msg, sk));
-        Ecvrf.ProveResult rS = Ecvrf.prove(seed, alpha, sodium);
-        Ecvrf.ProveResult rJ = Ecvrf.prove(seed, alpha, jvm);
+        Ecvrf.ProveResult rS = Ecvrf.prove(VrfKey.fromSeed(seed, sodium), alpha, sodium);
+        Ecvrf.ProveResult rJ = Ecvrf.prove(VrfKey.fromSeed(seed, jvm), alpha, jvm);
         assertArrayEquals(rS.proof().bytes(), rJ.proof().bytes());
         assertArrayEquals(rS.beta(), rJ.beta());
     }

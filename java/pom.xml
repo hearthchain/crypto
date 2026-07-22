@@ -47,11 +47,20 @@
   <properties>
     <maven.compiler.release>25</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <!-- Panama FFI calls libsodium; silence the restricted-method warning. -->
+    <!-- Panama FFI (libsodium) and JNI (blst) call native code; silence the warning. -->
     <nativeAccess>--enable-native-access=ALL-UNNAMED</nativeAccess>
+    <!-- `mvn -q compile exec:exec [-DmainClass=...]` picks which sample to run. -->
+    <mainClass>tech.hearth.app.Demo</mainClass>
   </properties>
 
   <dependencies>
+    <!-- BLS12-381 signatures/aggregation (blst). Only the BlsKey signature ops
+         need this; derivation and the ed25519/VRF stack stay dependency-free. -->
+    <dependency>
+      <groupId>com.wavesplatform</groupId>
+      <artifactId>blst-java</artifactId>
+      <version>0.3.15-1</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -100,7 +109,7 @@
             <argument>${nativeAccess}</argument>
             <argument>-classpath</argument>
             <classpath/>
-            <argument>tech.hearth.app.Demo</argument>
+            <argument>${mainClass}</argument>
           </arguments>
         </configuration>
       </plugin>

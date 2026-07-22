@@ -25,13 +25,13 @@ public final class KeyTree {
         return "m/" + Bls.PURPOSE + "/" + COIN_TYPE + "/" + account + "/0";
     }
 
-    /** Signing keypair using the default backend. */
-    public static Ed25519.KeyPair signingKey(byte[] seed, int account) {
+    /** Signing key using the default backend. */
+    public static SigningKey signingKey(byte[] seed, int account) {
         return signingKey(seed, account, Crypto.defaultBackend());
     }
 
-    /** VRF keypair using the default backend. */
-    public static Ed25519.KeyPair vrfKey(byte[] seed, int account) {
+    /** VRF key using the default backend. */
+    public static VrfKey vrfKey(byte[] seed, int account) {
         return vrfKey(seed, account, Crypto.defaultBackend());
     }
 
@@ -40,14 +40,14 @@ public final class KeyTree {
         return blsSecretKey(seed, account, Crypto.defaultBackend());
     }
 
-    /** ed25519 keypair for signing transactions. */
-    public static Ed25519.KeyPair signingKey(byte[] seed, int account, CryptoBackend backend) {
-        return Ed25519.fromSeed(Slip10.derivePath(seed, signingPath(account), backend).privateKey(), backend);
+    /** Ed25519 {@link SigningKey} for signing transactions/blocks. */
+    public static SigningKey signingKey(byte[] seed, int account, CryptoBackend backend) {
+        return SigningKey.fromSeed(Slip10.derivePath(seed, signingPath(account), backend).privateKey(), backend);
     }
 
-    /** ed25519 keypair for the VRF (its seed feeds {@link Ecvrf#prove}; publicKey is the VRF key). */
-    public static Ed25519.KeyPair vrfKey(byte[] seed, int account, CryptoBackend backend) {
-        return Ed25519.fromSeed(Slip10.derivePath(seed, vrfPath(account), backend).privateKey(), backend);
+    /** Ed25519 {@link VrfKey} for miner election (fed to {@link Ecvrf#prove}). */
+    public static VrfKey vrfKey(byte[] seed, int account, CryptoBackend backend) {
+        return VrfKey.fromSeed(Slip10.derivePath(seed, vrfPath(account), backend).privateKey(), backend);
     }
 
     /** BLS12-381 finality secret key (32-byte big-endian scalar). */

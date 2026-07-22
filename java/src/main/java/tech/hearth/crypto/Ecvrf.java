@@ -35,8 +35,8 @@ public final class Ecvrf {
     public record ProveResult(Proof proof, byte[] beta) {}
 
     /** Prove using the default backend. */
-    public static ProveResult prove(byte[] seed, byte[] alpha) {
-        return prove(seed, alpha, Crypto.defaultBackend());
+    public static ProveResult prove(VrfKey key, byte[] alpha) {
+        return prove(key, alpha, Crypto.defaultBackend());
     }
 
     /** Verify using the default backend. */
@@ -44,8 +44,9 @@ public final class Ecvrf {
         return verify(publicKey, alpha, pi, Crypto.defaultBackend());
     }
 
-    /** Prove: returns the proof pi and the VRF output beta. */
-    public static ProveResult prove(byte[] seed, byte[] alpha, CryptoBackend backend) {
+    /** Prove: returns the proof pi and the VRF output beta (64 bytes). */
+    public static ProveResult prove(VrfKey key, byte[] alpha, CryptoBackend backend) {
+        byte[] seed = key.seed();
         byte[] x = Ed25519.secretScalar(seed, backend);
         byte[] y = backend.scalarmultBaseNoclamp(x); // public key Y = x*B
         byte[] h = encodeToCurve(y, alpha, backend);
