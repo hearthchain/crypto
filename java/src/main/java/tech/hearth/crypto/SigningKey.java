@@ -43,7 +43,7 @@ public final class SigningKey {
 
     /**
      * This key's (network-independent) account address. Render it with
-     * {@link Address#toBech32(Address.Network)} or {@link Address#toBech32()}.
+     * {@link Address#toBech32(String)} or {@link Address#toBech32()}.
      */
     public Address toAddress() {
         return Address.fromPublicKey(publicKey);

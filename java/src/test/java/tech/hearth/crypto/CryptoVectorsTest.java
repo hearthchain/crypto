@@ -196,22 +196,21 @@ class CryptoVectorsTest {
         CryptoBackend b = anyBackend();
         Address a = Address.fromPublicKey(hx(DEMO_PK), b);
         // one identity, rendered per network via the HRP.
-        assertEquals("hrthm1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcj9u36h", a.toBech32(Address.Network.MAINNET));
-        assertEquals("hrtht1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcwumd6m", a.toBech32(Address.Network.TESTNET));
-        // parse requires the HRP to match the requested network.
-        assertEquals(a, Address.parse(a.toBech32(Address.Network.MAINNET), Address.Network.MAINNET).orElseThrow());
-        assertTrue(Address.parse(a.toBech32(Address.Network.MAINNET), Address.Network.TESTNET).isEmpty());
-        assertEquals(Address.Network.MAINNET, Address.networkOf(a.toBech32(Address.Network.MAINNET)).orElseThrow());
+        assertEquals("hrth19uvmpe6ll76dav0mvk06d35att3wk7a7gm8xwm", a.toBech32(Address.MAINNET_HRP));
+        assertEquals("thrth19uvmpe6ll76dav0mvk06d35att3wk7a7vvkkh7", a.toBech32(Address.TESTNET_HRP));
+        // parse requires the HRP to match the requested one.
+        assertEquals(a, Address.parse(a.toBech32(Address.MAINNET_HRP), Address.MAINNET_HRP).orElseThrow());
+        assertTrue(Address.parse(a.toBech32(Address.MAINNET_HRP), Address.TESTNET_HRP).isEmpty());
+        assertEquals(Address.MAINNET_HRP, Address.hrpOf(a.toBech32(Address.MAINNET_HRP)).orElseThrow());
     }
 
     @Test
     void addressBytesRoundTripAndValueSemantics() {
         Address a = Address.fromPublicKey(hx(DEMO_PK), anyBackend());
 
-        // 21-byte on-chain form: version(0x00) || 20-byte hash, round-trips.
+        // 20-byte on-chain form: SHA-256(publicKey)[0:20], round-trips.
         byte[] payload = a.toBytes();
-        assertEquals(Address.PAYLOAD_LEN, payload.length);
-        assertEquals(Address.ED25519_VERSION, payload[0]);
+        assertEquals(Address.HASH_LEN, payload.length);
         assertEquals(a, Address.fromBytes(payload).orElseThrow());
 
         // network-independent identity: same account on any network is the same Address,
@@ -219,31 +218,60 @@ class CryptoVectorsTest {
         Address same = Address.fromBytes(payload.clone()).orElseThrow();
         assertEquals(a, same);
         assertEquals(a.hashCode(), same.hashCode());
-        assertNotEquals(a.toBech32(Address.Network.MAINNET), a.toBech32(Address.Network.TESTNET));
+        assertNotEquals(a.toBech32(Address.MAINNET_HRP), a.toBech32(Address.TESTNET_HRP));
 
-        // malformed payloads are rejected.
-        assertTrue(Address.fromBytes(new byte[20]).isEmpty());
-        byte[] badVersion = payload.clone();
-        badVersion[0] = 0x01;
-        assertTrue(Address.fromBytes(badVersion).isEmpty());
+        // malformed payloads (wrong length) are rejected.
+        assertTrue(Address.fromBytes(new byte[19]).isEmpty());
+        assertTrue(Address.fromBytes(new byte[21]).isEmpty());
     }
 
     @Test
-    void signingKeyToAddressAndDefaultNetwork() {
+    void signingKeyToAddressAndDefaultHrp() {
         SigningKey key = SigningKey.fromSeed(hx("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
         Address addr = key.toAddress(); // network-free identity
         assertEquals(Address.fromPublicKey(key.publicKey()), addr);
 
-        // no-arg toBech32() uses the process-wide default network.
-        Address.Network.setDefault(Address.Network.TESTNET);
-        assertEquals(addr.toBech32(Address.Network.TESTNET), addr.toBech32());
-        Address.Network.setDefault(Address.Network.MAINNET);
-        assertEquals(addr.toBech32(Address.Network.MAINNET), addr.toBech32());
+        // no-arg toBech32() uses the process-wide default HRP.
+        Address.setDefaultHrp(Address.TESTNET_HRP);
+        assertEquals(addr.toBech32(Address.TESTNET_HRP), addr.toBech32());
+        Address.setDefaultHrp(Address.MAINNET_HRP);
+        assertEquals(addr.toBech32(Address.MAINNET_HRP), addr.toBech32());
 
         // fail-closed when the default is unset.
-        Address.Network.setDefault(null);
+        Address.setDefaultHrp(null);
         assertThrows(IllegalStateException.class, addr::toBech32);
-        Address.Network.setDefault(Address.Network.MAINNET);
+        Address.setDefaultHrp(Address.MAINNET_HRP);
+    }
+
+    @Test
+    void defaultHrpAcceptsCustomPrefixes() {
+        Address a = Address.fromPublicKey(hx(DEMO_PK), anyBackend());
+        try {
+            // any well-formed prefix (e.g. a devnet's) renders and round-trips.
+            String s = a.toBech32("hrthdev");
+            assertTrue(s.startsWith("hrthdev1"));
+            assertEquals(a, Address.parse(s, "hrthdev").orElseThrow());
+            assertEquals("hrthdev", Address.hrpOf(s).orElseThrow());
+
+            // a foreign prefix does not parse under the requested HRP.
+            assertTrue(Address.parse(a.toBech32(Address.MAINNET_HRP), "hrthdev").isEmpty());
+
+            // installing it as the default drives the no-arg helper.
+            Address.setDefaultHrp("hrthdev");
+            assertEquals("hrthdev", Address.defaultHrp());
+            assertEquals(s, a.toBech32());
+
+            // HRPs are normalized (trimmed + lowercased).
+            Address.setDefaultHrp("  HRTHDEV  ");
+            assertEquals("hrthdev", Address.defaultHrp());
+
+            // invalid prefixes are rejected up front.
+            assertThrows(IllegalArgumentException.class, () -> Address.setDefaultHrp(""));
+            assertThrows(IllegalArgumentException.class, () -> Address.setDefaultHrp("de1v"));
+            assertThrows(IllegalArgumentException.class, () -> a.toBech32("de1v"));
+        } finally {
+            Address.setDefaultHrp(Address.MAINNET_HRP);
+        }
     }
 
     // --- Cross-parity with the Scala/Python/Go builds --------------------

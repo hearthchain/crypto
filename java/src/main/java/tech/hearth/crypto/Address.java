@@ -1,93 +1,85 @@
 package tech.hearth.crypto;
 
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
- * A network-independent account identity: {@code versionByte || SHA-256(publicKey)[0:20]}.
+ * A network-independent account identity: {@code SHA-256(publicKey)[0:20]}.
  *
- * <p>These 21 bytes ({@link #toBytes()}) are the canonical on-chain id — the
+ * <p>These 20 bytes ({@link #toBytes()}) are the canonical on-chain id — the
  * transaction recipient field, state keys, and equality all use them. The
  * <b>network is not part of the identity</b>; it only selects the human-readable
- * prefix when rendering/parsing the bech32m string, so it is supplied at that
- * boundary ({@link #toBech32(Network)} / {@link #parse(String, Network)}) rather
- * than stored here. The same account on mainnet and testnet is one {@code Address}.
+ * prefix (HRP) when rendering/parsing the bech32m string, so the HRP is supplied
+ * at that boundary ({@link #toBech32(String)} / {@link #parse(String, String)})
+ * rather than stored here. The same account on any network is one {@code Address}.
  *
  * <p>Immutable value type with content-based {@code equals}/{@code hashCode}.
  */
-public record Address(byte version, byte[] hash) {
+public record Address(byte[] hash) {
 
-    /** Address network — only relevant to the bech32m string form. */
-    public enum Network {
-        TESTNET("hrtht"),
-        MAINNET("hrthm");
+    public static final int HASH_LEN = 20;
 
-        private final String hrp;
+    /** Canonical bech32m prefix for mainnet. */
+    public static final String MAINNET_HRP = "hrth";
+    /** Canonical bech32m prefix for testnet. */
+    public static final String TESTNET_HRP = "thrth";
 
-        Network(String hrp) {
-            this.hrp = hrp;
-        }
+    // --- process-wide default HRP --------------------------------------------
+    //
+    // A node runs on a single network for its lifetime, so the HRP used by the
+    // no-arg string helpers is a global set once at startup, via -Dhearth.hrp or
+    // setDefaultHrp. It is fail-closed: if never set, defaultHrp() throws rather
+    // than silently guessing. Callers that render for several networks should
+    // pass the HRP explicitly instead.
 
-        public String hrp() {
-            return hrp;
-        }
+    private static volatile String defaultHrp = validateHrp(System.getProperty("hearth.hrp"));
 
-        static Optional<Network> byHrp(String hrp) {
-            for (Network n : values()) {
-                if (n.hrp.equals(hrp)) {
-                    return Optional.of(n);
-                }
-            }
-            return Optional.empty();
-        }
-
-        // --- process-wide default (for no-arg string helpers) ----------------
-        //
-        // A node runs on a single network for its lifetime, so a global default
-        // set once at startup is appropriate. It is fail-closed: if never set,
-        // getDefault() throws rather than silently guessing. Multi-network
-        // callers should pass the Network explicitly instead.
-
-        private static volatile Network defaultNetwork = fromSystemProperty();
-
-        private static Network fromSystemProperty() {
-            String p = System.getProperty("hearth.network");
-            if (p == null) {
-                return null;
-            }
-            return switch (p.trim().toLowerCase()) {
-                case "mainnet", "hrthm" -> MAINNET;
-                case "testnet", "hrtht" -> TESTNET;
-                default -> throw new IllegalArgumentException("unknown hearth.network: " + p);
-            };
-        }
-
-        /** Set the process-wide default network (pass {@code null} to clear it). */
-        public static void setDefault(Network network) {
-            defaultNetwork = network;
-        }
-
-        /**
-         * The process-wide default network. Set it once with {@link #setDefault}
-         * or {@code -Dhearth.network=mainnet|testnet}.
-         *
-         * @throws IllegalStateException if no default has been configured
-         */
-        public static Network getDefault() {
-            Network n = defaultNetwork;
-            if (n == null) {
-                throw new IllegalStateException(
-                        "default network not configured; call Address.Network.setDefault(...), "
-                                + "set -Dhearth.network=mainnet|testnet, or pass a Network explicitly");
-            }
-            return n;
-        }
+    /**
+     * Set the process-wide default HRP used by the no-arg {@link #toBech32()} and
+     * {@link #parse(String)} (pass {@code null} to clear it). Any well-formed
+     * prefix works — {@link #MAINNET_HRP}, {@link #TESTNET_HRP}, or a devnet's own.
+     *
+     * @throws IllegalArgumentException if {@code hrp} is not a valid lowercase
+     *     bech32 prefix
+     */
+    public static void setDefaultHrp(String hrp) {
+        defaultHrp = validateHrp(hrp);
     }
 
-    public static final byte ED25519_VERSION = 0x00;
-    public static final int HASH_LEN = 20;
-    /** Length of the canonical on-chain payload: version(1) || hash(20). */
-    public static final int PAYLOAD_LEN = 1 + HASH_LEN;
+    /**
+     * The process-wide default HRP. Set it once with {@link #setDefaultHrp} or
+     * {@code -Dhearth.hrp=<hrp>}.
+     *
+     * @throws IllegalStateException if no default has been configured
+     */
+    public static String defaultHrp() {
+        String h = defaultHrp;
+        if (h == null) {
+            throw new IllegalStateException(
+                    "default HRP not configured; call Address.setDefaultHrp(...), "
+                            + "set -Dhearth.hrp=<hrp>, or pass an HRP explicitly");
+        }
+        return h;
+    }
+
+    /** Normalize (trim + lowercase) and validate a bech32 HRP; {@code null} passes through. */
+    private static String validateHrp(String hrp) {
+        if (hrp == null) {
+            return null;
+        }
+        String h = hrp.trim().toLowerCase();
+        if (h.isEmpty() || h.length() > 83) {
+            throw new IllegalArgumentException("HRP must be 1..83 characters: '" + hrp + "'");
+        }
+        for (int i = 0; i < h.length(); i++) {
+            char c = h.charAt(i);
+            if (c < 'a' || c > 'z') {
+                throw new IllegalArgumentException("HRP must be lowercase a-z: '" + hrp + "'");
+            }
+        }
+        return h;
+    }
 
     public Address {
         if (hash.length != HASH_LEN) {
@@ -107,57 +99,55 @@ public record Address(byte version, byte[] hash) {
         if (publicKey.length != 32) {
             throw new IllegalArgumentException("public key must be 32 bytes");
         }
-        return new Address(ED25519_VERSION, Arrays.copyOfRange(backend.sha256(publicKey), 0, HASH_LEN));
+        return new Address(Arrays.copyOfRange(backend.sha256(publicKey), 0, HASH_LEN));
     }
 
     /**
-     * Parse the raw 21-byte on-chain form (version || hash), e.g. a transaction's
-     * recipient field. Empty if the payload is malformed.
+     * Parse the raw 20-byte on-chain form, e.g. a transaction's recipient field.
+     * Empty if the payload is malformed.
      */
     public static Optional<Address> fromBytes(byte[] payload) {
-        if (payload.length != PAYLOAD_LEN || payload[0] != ED25519_VERSION) {
+        if (payload.length != HASH_LEN) {
             return Optional.empty();
         }
-        return Optional.of(new Address(payload[0], Arrays.copyOfRange(payload, 1, PAYLOAD_LEN)));
+        return Optional.of(new Address(payload));
     }
 
-    /** Parse a bech32m string, requiring its HRP to match {@code network}. */
-    public static Optional<Address> parse(String s, Network network) {
+    /** Parse a bech32m string, requiring its HRP to equal {@code hrp}. */
+    public static Optional<Address> parse(String s, String hrp) {
+        String want = validateHrp(Objects.requireNonNull(hrp, "hrp"));
         return Bech32m.decode(s)
-                .flatMap(d -> d.hrp().equals(network.hrp()) ? fromBytes(d.data()) : Optional.empty());
+                .flatMap(d -> d.hrp().equals(want) ? fromBytes(d.data()) : Optional.empty());
     }
 
-    /** Parse a bech32m string against the {@linkplain Network#getDefault() default network}. */
+    /** Parse a bech32m string against the {@linkplain #defaultHrp() default HRP}. */
     public static Optional<Address> parse(String s) {
-        return parse(s, Network.getDefault());
+        return parse(s, defaultHrp());
     }
 
-    /** The network a bech32m string is encoded for, if its HRP is recognized. */
-    public static Optional<Network> networkOf(String s) {
-        return Bech32m.decode(s).flatMap(d -> Network.byHrp(d.hrp()));
+    /** The HRP a bech32m address string is encoded for, if it decodes. */
+    public static Optional<String> hrpOf(String s) {
+        return Bech32m.decode(s).map(Bech32m.Decoded::hrp);
     }
 
     // --- encoding ------------------------------------------------------------
 
-    /** The canonical 21-byte on-chain form: version || hash. */
+    /** The canonical 20-byte on-chain form. */
     public byte[] toBytes() {
-        byte[] out = new byte[PAYLOAD_LEN];
-        out[0] = version;
-        System.arraycopy(hash, 0, out, 1, HASH_LEN);
-        return out;
+        return hash.clone();
     }
 
-    /** The bech32m address string for a given network. */
-    public String toBech32(Network network) {
-        return Bech32m.encode(network.hrp(), toBytes());
+    /** The bech32m address string under the given HRP. */
+    public String toBech32(String hrp) {
+        return Bech32m.encode(validateHrp(Objects.requireNonNull(hrp, "hrp")), toBytes());
     }
 
-    /** The bech32m address string on the {@linkplain Network#getDefault() default network}. */
+    /** The bech32m address string under the {@linkplain #defaultHrp() default HRP}. */
     public String toBech32() {
-        return toBech32(Network.getDefault());
+        return toBech32(defaultHrp());
     }
 
-    /** Network-independent debug form (hex of the 21-byte payload); use {@link #toBech32} to display. */
+    /** Debug form; uses {@link #toBech32()} on the default HRP. */
     @Override
     public String toString() {
         return toBech32();
@@ -173,11 +163,11 @@ public record Address(byte version, byte[] hash) {
 
     @Override
     public boolean equals(Object o) {
-        return this == o || (o instanceof Address a && version == a.version && Arrays.equals(hash, a.hash));
+        return this == o || (o instanceof Address a && Arrays.equals(hash, a.hash));
     }
 
     @Override
     public int hashCode() {
-        return 31 * version + Arrays.hashCode(hash);
+        return Arrays.hashCode(hash);
     }
 }

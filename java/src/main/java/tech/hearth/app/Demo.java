@@ -58,8 +58,8 @@ public final class Demo {
         System.out.println("signing path   : " + KeyTree.signingPath(ACCOUNT));
         System.out.println("signing pubkey : " + Hex.encode(signing.publicKey()));
         Address address = signing.toAddress();
-        System.out.println("address (main) : " + address.toBech32(Address.Network.MAINNET));
-        System.out.println("address (test) : " + address.toBech32(Address.Network.TESTNET));
+        System.out.println("address (main) : " + address.toBech32(Address.MAINNET_HRP));
+        System.out.println("address (test) : " + address.toBech32(Address.TESTNET_HRP));
         System.out.println();
         System.out.println("VRF path       : " + KeyTree.vrfPath(ACCOUNT));
         System.out.println("VRF pubkey     : " + Hex.encode(vrf.publicKey()) + "  (distinct scalar from signing)");
