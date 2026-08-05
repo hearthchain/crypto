@@ -1,4 +1,4 @@
-// Official test vectors + cross-parity with the Scala/Java/Python/Go/Rust builds.
+// Official test vectors + cross-parity with the Java/Python/Go/Rust builds.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -86,6 +86,21 @@ test("Ed25519 sign/verify round trip", () => {
   assert.ok(!ed25519.verify(sig, new TextEncoder().encode("hello hearthh"), kp.publicKey));
 });
 
+test("Ed25519 rejects small-order public key forgery", () => {
+  // A small-order public key (in the limit, the identity: 0x01 followed by 31
+  // zero bytes) with R = the same point and S = 0 satisfies the raw
+  // verification equation [S]B = R + [k]A for every k, i.e. for every message
+  // — a universal forgery under @noble/curves' default (ZIP-215) mode, which
+  // is why verify() passes { zip215: false }.
+  const identity = new Uint8Array(32);
+  identity[0] = 1;
+  const forgedSig = new Uint8Array(64); // R = identity, S = 0
+  forgedSig.set(identity, 0);
+
+  assert.ok(!ed25519.verify(forgedSig, new TextEncoder().encode("attacker forged message 1"), identity));
+  assert.ok(!ed25519.verify(forgedSig, new TextEncoder().encode("totally different message 2"), identity));
+});
+
 const EIP2333: Array<[string, string, number, string]> = [
   ["c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04", "6083874454709270928345386274498605044986640685124978867557563392430687146096", 0, "20397789859736650942317412262472558107875392172444076792671091975210932703118"],
   ["3141592653589793238462643383279502884197169399375105820974944592", "29757020647961307431480504535336562678282505419141012933316116377660817309383", 3141592653, "25457201688850691947727629385191704516744796114925897962676248250929345014287"],
@@ -140,7 +155,7 @@ test("Address pinned + parse", () => {
   assert.equal(address.parseFor(main, address.Network.Testnet), null);
 });
 
-test("Cross-parity with the Scala/Java/Python/Go/Rust builds", () => {
+test("Cross-parity with the Java/Python/Go/Rust builds", () => {
   const seed = bip39.toSeed(ABANDON, "");
   assert.equal(
     hex.encode(seed),

@@ -108,6 +108,13 @@ public final class JvmBackend implements CryptoBackend {
         if (aPt == null || rPt == null) {
             return false;
         }
+        // Reject a small-order A or R: otherwise [k]A (or the R term) takes too
+        // few distinct values, letting an attacker forge a signature for a
+        // chosen message without knowing any private key — see
+        // Ed25519Math.isSmallOrder.
+        if (Ed25519Math.isSmallOrder(aPt) || Ed25519Math.isSmallOrder(rPt)) {
+            return false;
+        }
         BigInteger k = Ed25519Math.scalarFromLE(sha512(concat(rBytes, publicKey, msg))).mod(Ed25519Math.L);
         Point lhs = Ed25519Math.mulBase(s);                 // [S]B
         Point rhs = Ed25519Math.add(rPt, Ed25519Math.mul(k, aPt)); // R + [k]A

@@ -120,6 +120,25 @@ func TestEd25519SignVerify(t *testing.T) {
 	}
 }
 
+// A small-order public key (in the limit, the identity: 0x01 followed by 31
+// zero bytes) with R = the same point and S = 0 satisfies the raw
+// verification equation [S]B = R + [k]A for every k, i.e. for every message —
+// a universal forgery unless Verify rejects a small-order A or R. Go's
+// stdlib crypto/ed25519.Verify does not do this on its own.
+func TestEd25519RejectsSmallOrderPublicKeyForgery(t *testing.T) {
+	identity := make([]byte, 32)
+	identity[0] = 1
+	forgedSig := make([]byte, 64) // R = identity, S = 0
+	copy(forgedSig[:32], identity)
+
+	if hearth.Verify(forgedSig, []byte("attacker forged message 1"), identity) {
+		t.Error("forged signature accepted for message 1")
+	}
+	if hearth.Verify(forgedSig, []byte("totally different message 2"), identity) {
+		t.Error("forged signature accepted for message 2")
+	}
+}
+
 // --- EIP-2333 (BLS12-381 key derivation) ---------------------------------
 
 func TestEIP2333(t *testing.T) {
@@ -214,7 +233,7 @@ func TestAddressPinned(t *testing.T) {
 	}
 }
 
-// --- Cross-parity with the Scala/Python builds ---------------------------
+// --- Cross-parity with the other builds -----------------------------------
 
 func TestCrossParity(t *testing.T) {
 	seed := hearth.MnemonicToSeed(abandon, "")

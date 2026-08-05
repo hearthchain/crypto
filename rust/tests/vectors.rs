@@ -1,4 +1,4 @@
-//! Official test vectors + cross-parity with the Scala/Java/Python/Go builds.
+//! Official test vectors + cross-parity with the Java/Python/Go builds.
 
 use hearth::{address, bech32m, bip39, bls, ecvrf, ed25519, hex, keytree};
 use num_bigint::BigUint;

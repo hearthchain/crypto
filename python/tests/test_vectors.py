@@ -1,4 +1,4 @@
-"""Official crypto test vectors + cross-parity with the Scala implementation."""
+"""Official crypto test vectors + cross-parity with the other implementations."""
 
 from __future__ import annotations
 
@@ -175,10 +175,10 @@ def test_address_parse_and_cross_network() -> None:
     assert address.parse(tampered) is None
 
 
-# --- Cross-parity with the Scala build (same mnemonic -> same bytes) ------
+# --- Cross-parity with the other builds (same mnemonic -> same bytes) -----
 
 
-def test_cross_parity_with_scala() -> None:
+def test_cross_parity_with_other_builds() -> None:
     seed = bip39.to_seed(ABANDON)
     assert seed.hex() == (
         "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1"

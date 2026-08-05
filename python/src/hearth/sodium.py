@@ -3,7 +3,7 @@
 Only hashing and ed25519 group/scalar arithmetic go through libsodium here; the
 HMAC-based constructions (PBKDF2, SLIP-0010, HKDF) use the standard library in
 their own modules. Point/scalar functions that libsodium can reject return
-``None`` instead of raising, mirroring the Scala backend's ``Option``.
+``None`` instead of raising, mirroring an ``Option``-style result.
 """
 
 from __future__ import annotations

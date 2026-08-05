@@ -132,6 +132,27 @@ class CryptoVectorsTest {
         assertFalse(Ed25519.verify(sig, "hello hearthh".getBytes(java.nio.charset.StandardCharsets.UTF_8), kp.publicKey(), b));
     }
 
+    /**
+     * A small-order public key (in the limit, the identity: 0x01 followed by 31
+     * zero bytes) with R = the same point and S = 0 satisfies the raw
+     * verification equation [S]B = R + [k]A for every k, i.e. for every message
+     * — a universal forgery if the verifier doesn't reject it. Both backends
+     * must reject a small-order A.
+     */
+    @ParameterizedTest
+    @MethodSource("backends")
+    void ed25519RejectsSmallOrderPublicKeyForgery(CryptoBackend b) {
+        byte[] identity = new byte[32];
+        identity[0] = 1;
+        byte[] forgedSig = new byte[64]; // R = identity, S = 0
+        System.arraycopy(identity, 0, forgedSig, 0, 32);
+
+        assertFalse(Ed25519.verify(forgedSig, "attacker forged message 1".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                identity, b));
+        assertFalse(Ed25519.verify(forgedSig, "totally different message 2".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                identity, b));
+    }
+
     // --- EIP-2333 --------------------------------------------------------
 
     private record BlsVec(String seed, String master, long index, String child) {}
@@ -274,7 +295,7 @@ class CryptoVectorsTest {
         }
     }
 
-    // --- Cross-parity with the Scala/Python/Go builds --------------------
+    // --- Cross-parity with the other builds -------------------------------
 
     @Test
     void crossParity() {

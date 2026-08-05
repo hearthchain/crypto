@@ -15,6 +15,10 @@ tooling and layout.
   for BLS signing; ed25519/VRF/derivation stay dependency-free. Ciphersuite:
   minimal-pubkey-size, proof-of-possession (eth2). BLS keys are the EIP-2333
   scalars loaded verbatim (`SecretKey.from_bendian`), not re-derived.
+- **HPKE (RFC 9180)** (`Hpke`, `ApiKeyEnvelope`) for sealing a secret to a
+  published public key — see [Sealing a secret to a public key](#sealing-a-secret-to-a-public-key).
+  Dependency-free: the group operation is the JDK's `XDH` provider, the AEAD is
+  `javax.crypto`, and HMAC goes through `CryptoBackend` like everything else.
 
 ## Backends
 
@@ -39,11 +43,14 @@ cross-checks them). Force one with `HEARTH_CRYPTO_BACKEND=sodium|jvm`.
 ## Run
 
 ```bash
-mvn test                       # RFC 9381 / SLIP-0010 / BIP-39 / EIP-2333 / BIP-350 vectors + BLS sign/aggregate
+mvn test                       # RFC 9381 / 9180 / SLIP-0010 / BIP-39 / EIP-2333 / BIP-350 vectors + BLS sign/aggregate
 mvn -q compile exec:exec       # sample app (tech.hearth.app.Demo)
 
 # BLS finality example: derive N validator keys, sign, aggregate, verify
 mvn -q compile exec:exec -DmainClass=tech.hearth.app.BlsExample
+
+# HPKE example: seal an API key to an enclave's public key, open it, try to forge it
+mvn -q compile exec:exec -DmainClass=tech.hearth.app.HpkeExample
 
 # custom Demo inputs (after `mvn compile`):
 java --enable-native-access=ALL-UNNAMED -cp target/classes tech.hearth.app.Demo \
@@ -71,9 +78,53 @@ src/main/java/tech/hearth/crypto/
   Bech32m.java         BIP-350 codec
   Address.java         network-independent account identity + Network
   KeyTree.java         the three role keys from one seed
+  X25519.java          RFC 7748 over raw keys (JDK XDH)
+  Hpke.java            RFC 9180 single-shot seal/open, base mode
+  ApiKeyEnvelope.java  the API-key wire format on top of Hpke
   Hex.java             hex helpers
 src/main/java/tech/hearth/app/Demo.java        the sample app
 src/main/java/tech/hearth/app/BlsExample.java  BLS derive / sign / aggregate / verify
+src/main/java/tech/hearth/app/HpkeExample.java seal an API key to an enclave key
 src/test/java/tech/hearth/crypto/CryptoVectorsTest.java   vectors on both backends + cross-parity
 src/test/java/tech/hearth/crypto/BlsSignatureTest.java    BLS sign / aggregate / PoP
+src/test/java/tech/hearth/crypto/HpkeVectorsTest.java     RFC 9180 A.1/A.2 on both backends
+src/test/java/tech/hearth/crypto/ApiKeyEnvelopeTest.java  envelope round-trip / tamper / expiry
 ```
+
+## Sealing a secret to a public key
+
+`ApiKeyEnvelope` covers the case this library was extended for: shipping a
+32-character API key to a confidential VM (Intel TDX) that generated an X25519
+keypair inside the TD and bound the public key into its attestation report.
+
+```java
+// client — after verifying the quote and that REPORTDATA == SHA-512(ctx || pk)
+char[] apiKey = ApiKeyEnvelope.randomApiKey();
+byte[] envelope = ApiKeyEnvelope.seal(enclavePublicKey, apiKey,
+        ApiKeyEnvelope.Metadata.of("prod/ingest-api", Instant.now().plus(Duration.ofDays(1))));
+
+// enclave
+ApiKeyEnvelope.Opened opened = ApiKeyEnvelope.open(enclaveSecretKey, envelope);
+use(opened.apiKey());
+opened.wipe();
+```
+
+Ciphersuite: **DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + ChaCha20-Poly1305**
+(0x0020 / 0x0001 / 0x0003), HPKE **base mode**, single-shot. AES-128-GCM and
+AES-256-GCM are also available through `Hpke.Suite`. The envelope is 124 bytes
+for a 15-character key id: a 20-byte fixed header, the metadata, the 32-byte
+encapsulated key, and 48 bytes of ciphertext. Everything before the encapsulated
+key is the AEAD's additional data, so the suite ids, the recipient fingerprint,
+the key id and the expiry are all covered by the tag.
+
+Use `Hpke` directly for any other payload; `ApiKeyEnvelope` only adds the fixed
+`info` string, the frame, and the 32-alphanumeric-character check.
+
+**This is only half of the problem.** HPKE gets the key to whoever holds the
+private key; it says nothing about *who that is*. The client must verify the TDX
+quote — signature chain to Intel's PCS, TCB status, `MRTD`/`RTMR`
+measurements — and check that the public key it is about to seal to is the one
+hashed into `REPORTDATA`, before calling `seal`. Base mode also leaves the sender
+unauthenticated and the ciphertext replayable for as long as the recipient's
+private key lives: authorize delivery at the transport layer, keep the TD's
+keypair ephemeral per boot, and set an expiry.

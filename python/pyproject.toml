@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pynacl>=1.5.0", # libsodium bindings
+    "cryptography>=43", # X25519 + AEAD for hearth.hpke / hearth.apikeyenvelope
 ]
 
 [project.scripts]
 hearth-demo = "hearth.demo:main"
+hearth-hpke-example = "hearth.hpke_example:main"
 
 [dependency-groups]
 dev = [

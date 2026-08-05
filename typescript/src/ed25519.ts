@@ -26,9 +26,18 @@ export class KeyPair {
   }
 }
 
+/**
+ * Verify a detached signature under RFC 8032-strict rules (`zip215: false`).
+ *
+ * @noble/curves defaults to ZIP-215 verification, which accepts a small-order
+ * public key or R. A small-order A (in the limit, the identity point) with
+ * R = the same point and S = 0 satisfies the raw verification equation
+ * [S]B = R + [k]A for every k, i.e. for every message — a universal forgery
+ * under the permissive default. `zip215: false` rejects it.
+ */
 export function verify(signature: Uint8Array, message: Uint8Array, publicKey: Uint8Array): boolean {
   try {
-    return ed25519.verify(signature, message, publicKey);
+    return ed25519.verify(signature, message, publicKey, { zip215: false });
   } catch {
     return false;
   }

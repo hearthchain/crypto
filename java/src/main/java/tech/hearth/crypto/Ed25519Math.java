@@ -85,6 +85,22 @@ final class Ed25519Math {
         return isIdentity(mul(L, pt));
     }
 
+    /**
+     * True iff pt has order dividing 8 (the curve's cofactor) — the identity
+     * itself, or one of the 2-, 4-, or 8-torsion points. gcd(L, 8) = 1, so this
+     * is the complementary test to {@link #isOnMainSubgroup}: a full-order
+     * point never satisfies it, and a low-order point never satisfies
+     * {@code isOnMainSubgroup} unless it happens to be the identity (for which
+     * both are trivially true). Signature verification must reject these: with
+     * a small-order public key A (in the limit, A = identity), [k]A takes only
+     * as many distinct values as A's order, which is enough to satisfy the
+     * verification equation for an attacker-chosen message without knowing any
+     * private key.
+     */
+    static boolean isSmallOrder(Point pt) {
+        return isIdentity(mul(BigInteger.valueOf(8), pt));
+    }
+
     // --- Encoding ------------------------------------------------------------
 
     static byte[] encode(Point pt) {

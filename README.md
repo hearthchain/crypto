@@ -6,12 +6,11 @@ for stake-weighted finality — all derived from a single BIP-39 mnemonic.
 
 ## Implementations
 
-Six implementations, **byte-for-byte compatible** (same test vectors, same derived keys and
+Five implementations, **byte-for-byte compatible** (same test vectors, same derived keys and
 addresses — cross-checked in each test suite):
 
 | | Directory | Stack |
 |---|---|---|
-| Scala | [`scala/`](scala/README.md) | Scala 3 + sbt; libsodium via Panama FFI, pure-JVM fallback |
 | Java | [`java/`](java/README.md) | Java 25 + Maven; libsodium via Panama FFI, pure-JVM fallback |
 | Python | [`python/`](python/README.md) | uv + PyNaCl (libsodium) |
 | Go | [`go/`](go/README.md) | Go 1.26; pure Go (`filippo.io/edwards25519`), no cgo |
@@ -25,7 +24,7 @@ Each implementation embeds its own copy of the immutable BIP-39 English wordlist
 `go:embed` can't cross directories or follow symlinks, so a single shared file isn't
 practical). Drift is prevented by a checksum guard: every suite asserts the wordlist's
 SHA-256 matches the official value, and [`scripts/check-wordlists.sh`](scripts/check-wordlists.sh)
-checks all six copies at once (wire it into CI).
+checks all five copies at once (wire it into CI).
 
 ## Cryptographic choices
 
@@ -36,8 +35,9 @@ checks all six copies at once (wire it into CI).
 | Finality           | **BLS12-381 aggregate signatures** (key derivation via EIP-2333) | Stake-weighted finality: aggregate any voter subset whose balance > 50%. |
 | Mnemonic → seed    | **BIP-39** (PBKDF2-HMAC-SHA512, 2048 iters)                    | Standard wallet seed phrases. |
 | Key derivation     | **SLIP-0010 ed25519** (hardened-only) + **EIP-2333** for BLS   | The HD schemes Ledger / eth2 use for their respective curves. |
+| Secret delivery    | **HPKE (RFC 9180)**, DHKEM(X25519, HKDF-SHA256) + ChaCha20-Poly1305 | Sealing a secret (an API key) to a public key an enclave published — same curve family, standardized. Implemented in all five ([`ApiKeyEnvelope`](java/README.md#sealing-a-secret-to-a-public-key)/[`apikeyenvelope`](rust/README.md#sealing-a-secret-to-a-public-key)), verified against the RFC 9180 A.1/A.2 vectors. |
 
-Curve, hash and VRF group arithmetic run on **libsodium** (Scala, Java, Python) or audited
+Curve, hash and VRF group arithmetic run on **libsodium** (Java, Python) or audited
 pure-language crates — **`curve25519-dalek`** (Rust), **`filippo.io/edwards25519`** (Go), and
 **`@noble/curves`** (TypeScript); the HMAC-based constructions (PBKDF2, SLIP-0010, HKDF) use
 each language's standard library.
@@ -91,7 +91,7 @@ address. Replay protection belongs in the signed transaction, and is the plan fo
 
 ## The sample app
 
-All six implementations ship the same demo. Given a BIP-39 mnemonic it:
+All five implementations ship the same demo. Given a BIP-39 mnemonic it:
 
 1. derives the three role keys from one seed (signing + VRF ed25519 keys at distinct
    SLIP-0010 paths, and the BLS12-381 finality key via EIP-2333);
@@ -100,11 +100,10 @@ All six implementations ship the same demo. Given a BIP-39 mnemonic it:
 4. takes a base64 byte string as VRF input `alpha`, **VRF-signs** it with the **VRF** key to a
    proof `pi`, derives the VRF value `beta`, and verifies the proof.
 
-Run it via [`scala/`](scala/README.md) (`sbt run`), [`java/`](java/README.md)
-(`mvn -q compile exec:exec`), [`python/`](python/README.md) (`uv run hearth-demo`),
-[`go/`](go/README.md) (`go run ./cmd/hearth-demo`), [`rust/`](rust/README.md)
+Run it via [`java/`](java/README.md) (`mvn -q compile exec:exec`), [`python/`](python/README.md)
+(`uv run hearth-demo`), [`go/`](go/README.md) (`go run ./cmd/hearth-demo`), [`rust/`](rust/README.md)
 (`cargo run --example hearth-demo`), or [`typescript/`](typescript/README.md)
-(`npm run demo`); all six print identical values for the same inputs.
+(`npm run demo`); all five print identical values for the same inputs.
 
 ## Status / next steps
 
@@ -112,3 +111,7 @@ This is a crypto foundation sketch, not a chain yet. Natural next pieces:
 transaction & block types with a domain-separated signing envelope
 (`sign(SHA-512(DST ‖ networkId ‖ bytes))`), a leader-election rule over `beta`, BLS finality
 signing/aggregation/PoP (needs a `blst` pairing backend), a P2P layer, and storage.
+
+HPKE (`Hpke`/`hpke` + `ApiKeyEnvelope`/`apikeyenvelope`) now ships in all five implementations,
+each checked against the same RFC 9180 A.1/A.2 vectors — the byte-for-byte parity claim above
+covers it too.

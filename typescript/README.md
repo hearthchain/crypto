@@ -14,6 +14,12 @@ TypeScript tooling and layout.
   [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) — audited,
   zero-dependency, constant-time. BLS `mod r` uses native `BigInt`; BIP-39 NFKD
   uses the built-in `String.prototype.normalize`.
+- **HPKE (RFC 9180)** (`hpke`, `apikeyenvelope`) for sealing a secret to a
+  published public key — see [Sealing a secret to a public key](#sealing-a-secret-to-a-public-key).
+  X25519 comes from `@noble/curves`; the AES-GCM and ChaCha20-Poly1305 AEADs
+  from [`@noble/ciphers`](https://github.com/paulmillr/noble-ciphers) (same
+  publisher family, added alongside the existing `@noble/curves`/`@noble/hashes`
+  dependencies); HKDF is built on `@noble/hashes`' HMAC-SHA256 like everything else.
 
 ## Prerequisites
 
@@ -24,9 +30,12 @@ TypeScript tooling and layout.
 
 ```bash
 npm install
-npm test          # RFC 9381 / SLIP-0010 / BIP-39 / EIP-2333 / BIP-350 vectors + cross-parity
+npm test          # RFC 9381 / 9180 / SLIP-0010 / BIP-39 / EIP-2333 / BIP-350 vectors + cross-parity
 npm run demo      # the sample app with a demo mnemonic
 npm run typecheck # tsc --noEmit
+
+# HPKE example: seal an API key to an enclave's public key, open it, try to forge it
+npm run hpke-example
 
 # custom inputs:
 node src/demo.ts "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" aGVsbG8= d29ybGQ=
@@ -46,8 +55,57 @@ src/
   bech32m.ts     BIP-350 codec
   address.ts     account addresses + Network
   keytree.ts     the three role keys from one seed
+  x25519.ts      RFC 7748 over raw keys (@noble/curves)
+  hpke.ts        RFC 9180 single-shot seal/open, base mode
+  apikeyenvelope.ts  the API-key wire format on top of hpke.ts
   hex.ts         hex helpers
   index.ts       namespaced re-exports
   demo.ts        the sample app
-test/vectors.test.ts            official vectors + cross-parity with the other builds
+  hpke-example.ts    seal an API key to an enclave key
+test/vectors.test.ts             official vectors + cross-parity with the other builds
+test/hpke.test.ts                RFC 9180 A.1/A.2 vectors + tamper/rejection coverage
+test/apikeyenvelope.test.ts      envelope round-trip / tamper / expiry
 ```
+
+## Sealing a secret to a public key
+
+`apikeyenvelope` covers the case this library was extended for: shipping a
+32-character API key to a confidential VM (Intel TDX) that generated an X25519
+keypair inside the TD and bound the public key into its attestation report.
+
+```typescript
+import { apikeyenvelope as env } from "@hearth/crypto";
+
+// client — after verifying the quote and that REPORTDATA == SHA-512(ctx || pk)
+const apiKey = env.randomApiKey();
+const envelope = env.seal(
+  enclavePublicKey,
+  apiKey,
+  env.metadata("prod/ingest-api", new Date(Date.now() + 24 * 3600 * 1000)),
+);
+
+// enclave
+const opened = env.open(enclaveSecretKey, envelope);
+use(opened.apiKey);
+env.wipe(opened);
+```
+
+Ciphersuite: **DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + ChaCha20-Poly1305**
+(0x0020 / 0x0001 / 0x0003), HPKE **base mode**, single-shot. AES-128-GCM and
+AES-256-GCM are also available through `hpke.Suite`. The envelope is 124 bytes
+for a 15-character key id: a 20-byte fixed header, the metadata, the 32-byte
+encapsulated key, and 48 bytes of ciphertext. Everything before the encapsulated
+key is the AEAD's additional data, so the suite ids, the recipient fingerprint,
+the key id and the expiry are all covered by the tag.
+
+Use `hpke` directly for any other payload; `apikeyenvelope` only adds the fixed
+`info` string, the frame, and the 32-alphanumeric-character check.
+
+**This is only half of the problem.** HPKE gets the key to whoever holds the
+private key; it says nothing about *who that is*. The client must verify the TDX
+quote — signature chain to Intel's PCS, TCB status, `MRTD`/`RTMR`
+measurements — and check that the public key it is about to seal to is the one
+hashed into `REPORTDATA`, before calling `seal`. Base mode also leaves the sender
+unauthenticated and the ciphertext replayable for as long as the recipient's
+private key lives: authorize delivery at the transport layer, keep the TD's
+keypair ephemeral per boot, and set an expiry.

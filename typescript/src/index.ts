@@ -8,3 +8,6 @@ export * as ecvrf from "./ecvrf.ts";
 export * as bech32m from "./bech32m.ts";
 export * as address from "./address.ts";
 export * as keytree from "./keytree.ts";
+export * as x25519 from "./x25519.ts";
+export * as hpke from "./hpke.ts";
+export * as apikeyenvelope from "./apikeyenvelope.ts";
