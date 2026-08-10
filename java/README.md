@@ -13,7 +13,10 @@ tooling and layout.
 - **BLS12-381 signatures/aggregation** (`BlsKey`) run on **blst** via
   `com.wavesplatform:blst-java` (JNI) — the one runtime dependency, needed only
   for BLS signing; ed25519/VRF/derivation stay dependency-free. Ciphersuite:
-  minimal-pubkey-size, proof-of-possession (eth2). BLS keys are the EIP-2333
+  minimal-pubkey-size, proof-of-possession (eth2) by default (`sign`/`verify`/
+  `fastAggregateVerify`), plus a Basic ciphersuite (`signBasic`/`verifyBasic`/
+  `fastAggregateVerifyBasic`) for callers doing their own out-of-band
+  proof-of-possession. BLS keys are the EIP-2333
   scalars loaded verbatim (`SecretKey.from_bendian`), not re-derived.
 - **HPKE (RFC 9180)** (`Hpke`, `ApiKeyEnvelope`) for sealing a secret to a
   published public key — see [Sealing a secret to a public key](#sealing-a-secret-to-a-public-key).

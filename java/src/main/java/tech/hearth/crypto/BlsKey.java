@@ -12,14 +12,22 @@ import supranational.blst.SecretKey;
 
 /**
  * A BLS12-381 finality key: signing plus signature/public-key aggregation, on
- * blst. Uses the eth2 ciphersuite <b>minimal-pubkey-size, proof-of-possession</b>
- * — public keys are 48-byte G1 points, signatures are 96-byte G2 points.
+ * blst. Defaults to the eth2 ciphersuite <b>minimal-pubkey-size,
+ * proof-of-possession</b> — public keys are 48-byte G1 points, signatures are
+ * 96-byte G2 points. A second, <b>Basic</b> ciphersuite ({@link #signBasic},
+ * {@link #verifyBasic}, {@link #fastAggregateVerifyBasic}) is also available
+ * for callers that enforce rogue-key defense themselves out of band (e.g. a
+ * proof of possession bound to something beyond the bare public key, such as
+ * a validity period) instead of relying on the POP ciphersuite's dedicated
+ * proof-of-possession DST; the two ciphersuites use disjoint DSTs, so a
+ * signature under one is never mistakable for the other.
  *
  * <p>The secret scalar is the one derived by {@link KeyTree#blsSecretKey} /
  * {@link Bls} (EIP-2333); it is loaded verbatim via {@code from_bendian} (not
  * re-derived), so a key here matches the derivation the other implementations
  * agree on. The scalar never leaves this object — only {@link #publicKey()},
- * {@link #sign} and {@link #proofOfPossession()} are exposed.
+ * {@link #sign}, {@link #signBasic} and {@link #proofOfPossession()} are
+ * exposed.
  */
 public final class BlsKey {
 
@@ -27,6 +35,10 @@ public final class BlsKey {
     private static final String DST_SIG = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
     /** Ciphersuite DST for proofs of possession. */
     private static final String DST_POP = "BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
+    /** Ciphersuite DST for the Basic (unaugmented) scheme: no built-in rogue-key defense. */
+    private static final String DST_SIG_BASIC = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+    /** KeyGen (draft-irtf-cfrg-bls-signature, the algorithm blst calls {@code keygen_v5}) salt. */
+    private static final byte[] KEYGEN_SALT = "BLS-SIG-KEYGEN-SALT-".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
 
     public static final int PUBLIC_KEY_BYTES = 48;
     public static final int SIGNATURE_BYTES = 96;
@@ -54,6 +66,20 @@ public final class BlsKey {
         return fromSecretKey(KeyTree.blsSecretKey(seed, account));
     }
 
+    /**
+     * Derive a key straight from an arbitrary-length seed via blst's own KeyGen
+     * (draft-irtf-cfrg-bls-signature {@code keygen_v5}), not EIP-2333. Unlike
+     * {@link #fromSeed}, this takes no account index and accepts any seed length
+     * (a seed shorter than 32 bytes may collapse to the zero scalar, which is a
+     * valid, if degenerate, key). Intended for tests/tooling that just need a
+     * deterministic key from arbitrary bytes, not real account derivation.
+     */
+    public static BlsKey fromSeedKeygenV5(byte[] seed) {
+        SecretKey sk = new SecretKey();
+        sk.keygen_v5(seed, KEYGEN_SALT);
+        return new BlsKey(sk, new P1(sk).compress());
+    }
+
     /** The 48-byte compressed G1 public key. */
     public byte[] publicKey() {
         return publicKey.clone();
@@ -62,6 +88,11 @@ public final class BlsKey {
     /** Sign {@code message}, returning the 96-byte compressed G2 signature. */
     public byte[] sign(byte[] message) {
         return new P2().hash_to(message, DST_SIG).sign_with(sk).compress();
+    }
+
+    /** Sign {@code message} under the Basic ciphersuite (see the class doc). */
+    public byte[] signBasic(byte[] message) {
+        return new P2().hash_to(message, DST_SIG_BASIC).sign_with(sk).compress();
     }
 
     /** A proof of possession: a signature over this key's own public key (distinct DST). */
@@ -76,9 +107,28 @@ public final class BlsKey {
         return coreVerify(publicKey, message, signature, DST_SIG);
     }
 
+    /** Verify a single signature under the Basic ciphersuite (see the class doc). */
+    public static boolean verifyBasic(byte[] publicKey, byte[] message, byte[] signature) {
+        return coreVerify(publicKey, message, signature, DST_SIG_BASIC);
+    }
+
     /** Verify a proof of possession against a public key. */
     public static boolean verifyProofOfPossession(byte[] publicKey, byte[] pop) {
         return coreVerify(publicKey, publicKey, pop, DST_POP);
+    }
+
+    /**
+     * Whether {@code publicKey} decodes to a valid, non-identity point in the correct
+     * subgroup. Intended for a one-time check when registering a new signer's key,
+     * ahead of ever using it in {@link #fastAggregateVerifyBasic}/{@link #fastAggregateVerify}.
+     */
+    public static boolean isValidPublicKey(byte[] publicKey) {
+        try {
+            P1_Affine pk = new P1_Affine(publicKey);
+            return pk.in_group() && !pk.is_inf();
+        } catch (RuntimeException e) {
+            return false; // malformed point encoding, etc.
+        }
     }
 
     /** Aggregate signatures into one 96-byte signature (point addition in G2). */
@@ -113,6 +163,11 @@ public final class BlsKey {
      */
     public static boolean fastAggregateVerify(List<byte[]> publicKeys, byte[] message, byte[] aggregateSignature) {
         return verify(aggregatePublicKeys(publicKeys), message, aggregateSignature);
+    }
+
+    /** {@link #fastAggregateVerify}, under the Basic ciphersuite (see the class doc). */
+    public static boolean fastAggregateVerifyBasic(List<byte[]> publicKeys, byte[] message, byte[] aggregateSignature) {
+        return verifyBasic(aggregatePublicKeys(publicKeys), message, aggregateSignature);
     }
 
     private static boolean coreVerify(byte[] publicKey, byte[] message, byte[] signature, String dst) {

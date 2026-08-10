@@ -32,7 +32,7 @@ checks all five copies at once (wire it into CI).
 |--------------------|---------------------------------------------------------------|-----|
 | Signatures         | **Ed25519 / EdDSA (RFC 8032)**                                 | The modern standard signature scheme; supported **natively on Ledger** devices. |
 | Miner election VRF | **ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381, suite 0x03)**       | Standardized VRF sharing Ed25519's curve; derived from a **separate** key (see below). |
-| Finality           | **BLS12-381 aggregate signatures** (key derivation via EIP-2333) | Stake-weighted finality: aggregate any voter subset whose balance > 50%. |
+| Finality           | **BLS12-381 aggregate signatures** (key derivation via EIP-2333; signing so far only in Java) | Stake-weighted finality: aggregate any voter subset whose balance > 50%. |
 | Mnemonic → seed    | **BIP-39** (PBKDF2-HMAC-SHA512, 2048 iters)                    | Standard wallet seed phrases. |
 | Key derivation     | **SLIP-0010 ed25519** (hardened-only) + **EIP-2333** for BLS   | The HD schemes Ledger / eth2 use for their respective curves. |
 | Secret delivery    | **HPKE (RFC 9180)**, DHKEM(X25519, HKDF-SHA256) + ChaCha20-Poly1305 | Sealing a secret (an API key) to a public key an enclave published — same curve family, standardized. Implemented in all five ([`ApiKeyEnvelope`](java/README.md#sealing-a-secret-to-a-public-key)/[`apikeyenvelope`](rust/README.md#sealing-a-secret-to-a-public-key)), verified against the RFC 9180 A.1/A.2 vectors. |
@@ -61,8 +61,11 @@ One mnemonic, three independent keys:
 
 ed25519 paths are all-hardened; BLS paths carry **no** `'` — EIP-2333 has no hardened/
 non-hardened distinction, it is hardened-equivalent throughout. (`9381` is a placeholder
-coin type; register a real SLIP-0044 value.) Only key *derivation* for BLS is implemented;
-signing/aggregation/PoP would need a pairing backend such as `blst`.
+coin type; register a real SLIP-0044 value.) BLS key *derivation* is implemented in all five;
+BLS *signing*/aggregation/PoP needs a pairing backend, and so far only [`java/`](java/README.md)
+has one (`BlsKey`, on `blst-java`) — the eth2-standard ciphersuite (minimal-pubkey-size,
+proof-of-possession) plus a Basic (unaugmented) one for callers doing their own out-of-band
+proof of possession. The other four implementations remain derivation-only.
 
 ## Addresses
 
@@ -109,8 +112,9 @@ Run it via [`java/`](java/README.md) (`mvn -q compile exec:exec`), [`python/`](p
 
 This is a crypto foundation sketch, not a chain yet. Natural next pieces:
 transaction & block types with a domain-separated signing envelope
-(`sign(SHA-512(DST ‖ networkId ‖ bytes))`), a leader-election rule over `beta`, BLS finality
-signing/aggregation/PoP (needs a `blst` pairing backend), a P2P layer, and storage.
+(`sign(SHA-512(DST ‖ networkId ‖ bytes))`), a leader-election rule over `beta`, porting BLS
+finality signing/aggregation/PoP (a `blst`-equivalent pairing backend) from Java to the other
+four implementations, a P2P layer, and storage.
 
 HPKE (`Hpke`/`hpke` + `ApiKeyEnvelope`/`apikeyenvelope`) now ships in all five implementations,
 each checked against the same RFC 9180 A.1/A.2 vectors — the byte-for-byte parity claim above
