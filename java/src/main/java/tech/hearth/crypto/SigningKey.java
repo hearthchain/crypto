@@ -57,4 +57,19 @@ public final class SigningKey {
     public byte[] sign(byte[] message, CryptoBackend backend) {
         return backend.signDetached(message, secretKey);
     }
+
+    /**
+     * The X25519 keypair sharing this identity's secret scalar — the standard
+     * ed25519-to-curve25519 conversion (libsodium's
+     * {@code crypto_sign_ed25519_{pk,sk}_to_curve25519}). A TD that publishes a
+     * single ed25519 identity key converts it this way to get the recipient key
+     * {@link Hpke} encrypts to, instead of managing a second keypair.
+     */
+    public X25519.Keypair toX25519() {
+        return toX25519(Crypto.defaultBackend());
+    }
+
+    public X25519.Keypair toX25519(CryptoBackend backend) {
+        return new X25519.Keypair(Ed25519.toX25519PublicKey(publicKey), Ed25519.secretScalar(seed, backend));
+    }
 }

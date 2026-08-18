@@ -32,4 +32,17 @@ public final class Ed25519 {
     static byte[] noncePrefix(byte[] seed, CryptoBackend backend) {
         return Arrays.copyOfRange(backend.sha512(seed), 32, 64);
     }
+
+    /**
+     * The X25519 public key sharing this Ed25519 public key's point, under the
+     * standard birational map (libsodium's
+     * {@code crypto_sign_ed25519_pk_to_curve25519}). Used by {@link SigningKey#toX25519()}.
+     */
+    static byte[] toX25519PublicKey(byte[] ed25519PublicKey) {
+        Ed25519Math.Point point = Ed25519Math.decode(ed25519PublicKey);
+        if (point == null) {
+            throw new IllegalArgumentException("not a valid Ed25519 public key");
+        }
+        return Ed25519Math.montgomeryU(point.y());
+    }
 }

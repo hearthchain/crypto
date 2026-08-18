@@ -9,6 +9,7 @@ import tech.hearth.crypto.ApiKeyEnvelope;
 import tech.hearth.crypto.Crypto;
 import tech.hearth.crypto.Hex;
 import tech.hearth.crypto.Hpke;
+import tech.hearth.crypto.SigningKey;
 import tech.hearth.crypto.X25519;
 
 /**
@@ -87,14 +88,41 @@ public final class HpkeExample {
                 ApiKeyEnvelope.Metadata.of("prod/ingest-api", Instant.now().minusSeconds(1)));
         System.out.printf("expired envelope     : %s%n", failureOf(() -> ApiKeyEnvelope.open(enclave.secretKey(), stale)));
 
-        section("5) The raw HPKE layer");
-        byte[] info = "hearth-chain/example/v1".getBytes(StandardCharsets.UTF_8);
+        section("5) The raw HPKE layer — interop with the Go miner's fixed vectors");
+        // The miner's integration test (internal/enclave/integration_vectors_test.go)
+        // derives a demo TD identity from a fixed ed25519 seed and reuses it,
+        // X25519-converted via SigningKey.toX25519(), as the HPKE recipient key.
+        // Reproducing its constants here proves this library's raw HPKE layer is
+        // wire-compatible with cloudflare/circl's.
+        byte[] minerSeed = "hearth-integration-demo-seed-001".getBytes(StandardCharsets.US_ASCII);
+        SigningKey minerIdentity = SigningKey.fromSeed(minerSeed);
+        byte[] minerMessage =
+                "hearth demo settlement v0: epoch 42, client 0x0102030405060708, spent 123456"
+                        .getBytes(StandardCharsets.UTF_8);
+        String expectedSignature = "1fb7407c5eafd14abd3cd256b319d6d314d1f09db7ef22b3d46d85ae821d7b03"
+                + "78b2b0b6fe2b19c6f5ac923a9af4b757e1e347ff1b327089965c6bab17c9770b";
+        System.out.printf("ed25519 signature matches the miner vector : %b%n",
+                Hex.encode(minerIdentity.sign(minerMessage)).equals(expectedSignature));
+
+        X25519.Keypair minerRecipient = minerIdentity.toX25519();
+        byte[] info = "hearth-api-key-envelope-v0".getBytes(StandardCharsets.UTF_8);
+        String minerApiKey = "sk-hearth-demo-4f3b45b412ebaad3";
+        byte[] minerEnvelope = Hex.decode(
+                "8f779588d219fb25de2ad323732d301756721878a6deefbc05c6f80d660e5f62"
+                        + "2af1a82c6381cf4e2d9f1cc3b9c3899cc5aa99c8aa93cd1d394217d3d3e95ec80475d8059968963e800b0fd4f66864");
+        byte[] minerEnc = Arrays.copyOfRange(minerEnvelope, 0, Hpke.ENC_BYTES);
+        byte[] minerCiphertext = Arrays.copyOfRange(minerEnvelope, Hpke.ENC_BYTES, minerEnvelope.length);
+        byte[] decryptedMinerEnvelope = Hpke.open(Hpke.Suite.X25519_SHA256_CHACHA20POLY1305,
+                minerRecipient.secretKey(), minerEnc, info, new byte[0], minerCiphertext);
+        System.out.printf("decrypts the miner's fixed envelope        : %s (expected %s)%n",
+                new String(decryptedMinerEnvelope, StandardCharsets.UTF_8), minerApiKey);
+
         Hpke.Sealed sealed = Hpke.seal(Hpke.Suite.X25519_SHA256_CHACHA20POLY1305,
-                enclave.publicKey(), info, new byte[0], "any payload".getBytes(StandardCharsets.UTF_8));
+                minerRecipient.publicKey(), info, new byte[0], minerApiKey.getBytes(StandardCharsets.UTF_8));
         System.out.printf("enc (32 B)   : %s%n", Hex.encode(sealed.enc()));
         System.out.printf("ciphertext   : %s%n", Hex.encode(sealed.ciphertext()));
         System.out.printf("opened       : %s%n", new String(Hpke.open(
-                Hpke.Suite.X25519_SHA256_CHACHA20POLY1305, enclave.secretKey(),
+                Hpke.Suite.X25519_SHA256_CHACHA20POLY1305, minerRecipient.secretKey(),
                 sealed.enc(), info, new byte[0], sealed.ciphertext()), StandardCharsets.UTF_8));
         System.out.println();
     }

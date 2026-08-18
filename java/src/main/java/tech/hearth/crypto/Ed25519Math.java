@@ -153,6 +153,16 @@ final class Ed25519Math {
         return x;
     }
 
+    /**
+     * RFC 7748 §4.1 birational map, Edwards {@code y} to Montgomery {@code u}:
+     * {@code u = (1+y) / (1-y) mod p}. This is the field-arithmetic half of
+     * converting an Ed25519 public key to its X25519 counterpart.
+     */
+    static byte[] montgomeryU(BigInteger y) {
+        BigInteger u = BigInteger.ONE.add(y).multiply(inv(BigInteger.ONE.subtract(y).mod(P))).mod(P);
+        return toLittleEndian(u, 32);
+    }
+
     private static byte[] toLittleEndian(BigInteger n, int len) {
         byte[] out = new byte[len];
         BigInteger v = n.mod(P);
