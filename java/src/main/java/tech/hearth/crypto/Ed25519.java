@@ -36,7 +36,9 @@ public final class Ed25519 {
     /**
      * The X25519 public key sharing this Ed25519 public key's point, under the
      * standard birational map (libsodium's
-     * {@code crypto_sign_ed25519_pk_to_curve25519}). Used by {@link SigningKey#toX25519()}.
+     * {@code crypto_sign_ed25519_pk_to_curve25519}). Used by {@link SigningKey#toX25519()}
+     * (the seed-holding side) and {@link X25519#fromEd25519PublicKey} (the
+     * public-key-only side).
      */
     static byte[] toX25519PublicKey(byte[] ed25519PublicKey) {
         Ed25519Math.Point point = Ed25519Math.decode(ed25519PublicKey);

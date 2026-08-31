@@ -254,10 +254,22 @@ fn x25519_rejects_other_degenerate_public_keys() {
     // all-zero-output check above is a complete mitigation, not just a
     // heuristic for the one obvious case.
     let vectors = [
-        ("u=1",   "0100000000000000000000000000000000000000000000000000000000000000"),
-        ("u=p-1", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ("u=p",   "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ("u=p+1", "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+        (
+            "u=1",
+            "0100000000000000000000000000000000000000000000000000000000000000",
+        ),
+        (
+            "u=p-1",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        ),
+        (
+            "u=p",
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        ),
+        (
+            "u=p+1",
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        ),
     ];
     let kp = x25519::generate_keypair();
     for (name, h) in vectors {

@@ -64,6 +64,24 @@ public final class X25519 {
     }
 
     /**
+     * The X25519 public key sharing an Ed25519 public key's point, under the
+     * standard birational map (libsodium's {@code crypto_sign_ed25519_pk_to_curve25519}).
+     *
+     * <p>Unlike {@link SigningKey#toX25519()}, this needs only the public half:
+     * it is the conversion a <em>client</em> uses, since a client only ever
+     * observes an enclave's Ed25519 public key (from a quote's {@code report_data}
+     * or from the on-chain {@code RegisteredEnclave} registry) and never holds the
+     * seed. The enclave itself still derives the matching X25519 secret key with
+     * {@link SigningKey#toX25519()} on its own {@link SigningKey}.
+     *
+     * @throws IllegalArgumentException if {@code ed25519PublicKey} is not a valid
+     *         Ed25519 public key
+     */
+    public static byte[] fromEd25519PublicKey(byte[] ed25519PublicKey) {
+        return Ed25519.toX25519PublicKey(ed25519PublicKey);
+    }
+
+    /**
      * The Diffie-Hellman shared coordinate X25519(sk, pk).
      *
      * @throws IllegalArgumentException if {@code publicKey} has small order (an

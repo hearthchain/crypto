@@ -9,6 +9,7 @@ pub mod apikeyenvelope;
 pub mod bech32m;
 pub mod bip39;
 pub mod bls;
+pub mod bls_sig;
 pub mod ecvrf;
 pub mod ed25519;
 pub mod hex;
