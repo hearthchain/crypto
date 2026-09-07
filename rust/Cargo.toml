@@ -32,6 +32,24 @@ rand = "0.8"
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 
+# Vanity search (feature "vanity"): formally verified curve25519 field
+# arithmetic. curve25519-dalek exposes no field type or point coordinates, so
+# the batched-inversion inner loop cannot be built on it.
+fiat-crypto = { version = "0.3", optional = true }
+
+[features]
+# The address grinder and its binary. Pulls in the ARM/x86 SHA-256 instructions,
+# which roughly halve the inner loop.
+vanity = ["dep:fiat-crypto", "sha2/asm"]
+
+[[bin]]
+name = "hearth-vanity"
+required-features = ["vanity"]
+
 [dev-dependencies]
 # the sample app (examples/hearth-demo.rs) only.
 base64 = "0.22"
+
+[profile.release]
+lto = true
+codegen-units = 1

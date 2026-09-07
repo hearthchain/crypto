@@ -183,19 +183,179 @@ fn bech32m_vectors() {
 #[test]
 fn address_pinned() {
     let pk = hx("058b96bd967c4ad867eaab255dbce080cb1a45d03cf622caf8c16e4d871b0196");
+    let a = address::Address::from_public_key(&pk).unwrap();
+
+    // One identity, rendered per network via the HRP. These are the same strings
+    // the Java suite pins.
     assert_eq!(
-        address::from_public_key(&pk, address::Network::Mainnet).unwrap(),
-        "hrthm1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcj9u36h"
+        a.to_bech32(address::MAINNET_HRP),
+        "hrth19uvmpe6ll76dav0mvk06d35att3wk7a7gm8xwm"
     );
     assert_eq!(
-        address::from_public_key(&pk, address::Network::Testnet).unwrap(),
-        "hrtht1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcwumd6m"
+        a.to_bech32(address::TESTNET_HRP),
+        "thrth19uvmpe6ll76dav0mvk06d35att3wk7a7vvkkh7"
     );
-    let main = address::from_public_key(&pk, address::Network::Mainnet).unwrap();
-    let parsed = address::parse(&main).unwrap();
-    assert_eq!(parsed.network, address::Network::Mainnet);
-    assert_eq!(parsed.hash.len(), 20);
-    assert!(address::parse_for(&main, address::Network::Testnet).is_none());
+
+    // Parse requires the HRP to match the requested one.
+    let main = a.to_bech32(address::MAINNET_HRP);
+    assert_eq!(
+        address::Address::parse(&main, address::MAINNET_HRP),
+        Some(a)
+    );
+    assert_eq!(address::Address::parse(&main, address::TESTNET_HRP), None);
+    assert_eq!(
+        address::Address::hrp_of(&main).as_deref(),
+        Some(address::MAINNET_HRP)
+    );
+
+    // The 20-byte on-chain form round-trips, and the network is not in it.
+    let payload = a.to_bytes();
+    assert_eq!(payload.len(), address::HASH_LEN);
+    assert_eq!(address::Address::from_bytes(&payload), Some(a));
+    assert_eq!(address::Address::from_bytes(&[0u8; 19]), None);
+    assert_ne!(
+        a.to_bech32(address::MAINNET_HRP),
+        a.to_bech32(address::TESTNET_HRP)
+    );
+}
+
+// --- Seedless signing keys -----------------------------------------------
+
+const RFC8032_SEED: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+
+/// A seed key exported to expanded form and re-imported is the same key — same
+/// public key, same address, and byte-identical signatures, even though the two
+/// sign by different internal paths (ed25519-dalek's signer vs. the RFC 8032
+/// steps over the scalar). EdDSA is deterministic, so "same key" here means
+/// literally the same bytes out.
+#[test]
+fn expanded_key_round_trips_from_seed() {
+    let seed_key = ed25519::KeyPair::from_seed(&hx(RFC8032_SEED)).unwrap();
+    let expanded = seed_key.to_expanded_key();
+    let imported = ed25519::KeyPair::from_expanded_key(&expanded).unwrap();
+
+    assert_eq!(seed_key.public_key, imported.public_key);
+    assert_eq!(seed_key.to_address(), imported.to_address());
+    assert_eq!(expanded, imported.to_expanded_key());
+    assert!(seed_key.seed().is_some());
+    assert!(imported.seed().is_none());
+
+    let msg = b"hello hearth";
+    assert_eq!(seed_key.sign(msg), imported.sign(msg));
+    assert!(ed25519::verify(
+        &imported.sign(msg),
+        msg,
+        &imported.public_key
+    ));
+
+    // The exported scalar is RFC 8032's clamped one: bit 254 set, low 3 bits
+    // clear — so it is above L, i.e. import must accept non-reduced scalars or a
+    // seed key could not round-trip at all.
+    assert_eq!(expanded[31] & 0x40, 0x40);
+    assert_eq!(expanded[0] & 0x07, 0);
+}
+
+/// The vanity-search premise: a generator walks candidates by repeated point
+/// addition, `A_i = A_{i-1} + B` (i.e. `a_i = a_{i-1} + 1`), producing a scalar
+/// with no seed behind it and no clamping bits. Such a key must import, sign and
+/// verify like any other.
+#[test]
+fn key_from_incremented_scalar() {
+    use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
+    use curve25519_dalek::edwards::CompressedEdwardsY;
+    use curve25519_dalek::scalar::Scalar;
+
+    let previous = ed25519::KeyPair::from_seed(&hx(RFC8032_SEED)).unwrap();
+    let mut base = [0u8; 32];
+    base.copy_from_slice(&previous.to_expanded_key()[..32]);
+    let next = Scalar::from_bytes_mod_order(base) + Scalar::ONE;
+
+    let key = ed25519::KeyPair::from_scalar(&next.to_bytes()).unwrap();
+
+    // Reduced mod L the scalar no longer satisfies clamping; import must not care.
+    assert_ne!(next.to_bytes()[31] & 0x40, 0x40);
+
+    // The public key is exactly the point addition the generator performs, so the
+    // generator can match candidate addresses without ever building a key.
+    let stepped = CompressedEdwardsY(previous.public_key)
+        .decompress()
+        .unwrap()
+        + ED25519_BASEPOINT_POINT;
+    assert_eq!(stepped.compress().to_bytes(), key.public_key);
+
+    let msg = b"signed by a ground key";
+    assert!(ed25519::verify(&key.sign(msg), msg, &key.public_key));
+    assert!(!ed25519::verify(&key.sign(msg), msg, &previous.public_key));
+}
+
+/// Pinned seedless-key vectors — the same values the Java suite pins.
+#[test]
+fn seedless_keys_pinned() {
+    let expanded = hx(concat!(
+        "836b2194dc19add1d9433a016dcf9004236ca1dba85d93e1394679e51cd5d70f",
+        "fceac21612dc9d313d814e61fb2b29b5a62b70ec304ddb35065e8d801a01f4c6"
+    ));
+    let key = ed25519::KeyPair::from_expanded_key(&expanded).unwrap();
+
+    assert_eq!(
+        hex::encode(&key.public_key),
+        "4fbb4b65d86e26261b9c36fb892274239506c6fcc3baa6d145979beaf3622eb5"
+    );
+    assert_eq!(
+        key.to_address().to_bech32(address::MAINNET_HRP),
+        "hrth18x0mux45uy7d4lhvcna7net8zcmurgrcvaz0x8"
+    );
+    assert_eq!(
+        key.to_address().to_bech32(address::TESTNET_HRP),
+        "thrth18x0mux45uy7d4lhvcna7net8zcmurgrcg2nllz"
+    );
+    assert_eq!(
+        hex::encode(&key.sign(b"hello hearth")),
+        concat!(
+            "99991ffd3839e4281ea7c141f1b3914aa7640e7ecaf84c70f78866944eb75602",
+            "54441f3595766cdb52358612acb805f7c712f72a0f836d815ed208eedacddd0c"
+        )
+    );
+
+    // The same scalar imported bare: same public key, prefix derived from it.
+    let from_scalar = ed25519::KeyPair::from_scalar(&expanded[..32]).unwrap();
+    assert_eq!(from_scalar.public_key, key.public_key);
+    assert_eq!(
+        hex::encode(&from_scalar.to_expanded_key()),
+        concat!(
+            "836b2194dc19add1d9433a016dcf9004236ca1dba85d93e1394679e51cd5d70f",
+            "77e9580f2a6acea97d2a19731a144407c24f1a86356844fe0fe8ed5ea8fa1bdd"
+        )
+    );
+    // Deterministic: 32 bytes rebuild the identical key anywhere.
+    assert_eq!(
+        from_scalar.to_expanded_key(),
+        ed25519::KeyPair::from_scalar(&expanded[..32])
+            .unwrap()
+            .to_expanded_key()
+    );
+}
+
+#[test]
+fn seedless_import_rejects_malformed_input() {
+    assert!(ed25519::KeyPair::from_expanded_key(&[0u8; 63]).is_err());
+    assert!(ed25519::KeyPair::from_expanded_key(&[0u8; 65]).is_err());
+    assert!(ed25519::KeyPair::from_scalar(&[0u8; 31]).is_err());
+
+    // A zero scalar gives the identity public key, which verify rejects for every
+    // signature — the key would be unusable, so reject it here.
+    assert!(ed25519::KeyPair::from_expanded_key(&[0u8; 64]).is_err());
+    assert!(ed25519::KeyPair::from_scalar(&[0u8; 32]).is_err());
+
+    // L itself, and any multiple of it, is also zero mod L.
+    let order_l = hx("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+    assert!(ed25519::KeyPair::from_scalar(&order_l).is_err());
+
+    // Above the 255-bit range the group operations accept.
+    let mut high_bit = [0u8; 32];
+    high_bit[0] = 1;
+    high_bit[31] = 0x80;
+    assert!(ed25519::KeyPair::from_scalar(&high_bit).is_err());
 }
 
 // --- Cross-parity --------------------------------------------------------

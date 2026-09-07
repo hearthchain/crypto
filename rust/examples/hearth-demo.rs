@@ -52,11 +52,11 @@ fn main() {
     println!("signing pubkey : {}", hex::encode(&signing.public_key));
     println!(
         "address (main) : {}",
-        address::from_public_key(&signing.public_key, address::Network::Mainnet).unwrap()
+        signing.to_address().to_bech32(address::MAINNET_HRP)
     );
     println!(
         "address (test) : {}",
-        address::from_public_key(&signing.public_key, address::Network::Testnet).unwrap()
+        signing.to_address().to_bech32(address::TESTNET_HRP)
     );
     println!();
     println!("VRF path       : {}", keytree::vrf_path(ACCOUNT));
@@ -108,7 +108,10 @@ fn main() {
     // (4) VRF sign and derive VRF value with the VRF key
     section("4) ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381) - VRF key");
     let alpha = STANDARD.decode(alpha_b64).unwrap();
-    let (proof, beta) = ecvrf::prove(&vrf.seed, &alpha);
+    let (proof, beta) = ecvrf::prove(
+        vrf.seed().expect("VRF keys are always seed-derived"),
+        &alpha,
+    );
     let vrf_ok = ecvrf::verify(&vrf.public_key, &alpha, &proof.bytes());
     println!("alpha (b64)    : {alpha_b64}");
     println!("alpha (hex)    : {}", hex::encode(&alpha));

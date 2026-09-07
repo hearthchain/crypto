@@ -10,6 +10,13 @@ const GEN: [u32; 5] = [
     0x2a14_62b3,
 ];
 
+/// The 5-bit value a bech32 character stands for, or `None` if it is not in the
+/// alphabet (which excludes `b`, `i`, `o` and `1` to avoid look-alikes).
+pub fn charset_index(c: char) -> Option<u8> {
+    let b = u8::try_from(u32::from(c)).ok()?;
+    CHARSET.iter().position(|&x| x == b).map(|i| i as u8)
+}
+
 pub fn encode(hrp: &str, data: &[u8]) -> String {
     let mut values = convert_bits(
         &data.iter().map(|&b| b as u32).collect::<Vec<_>>(),

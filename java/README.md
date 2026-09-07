@@ -84,7 +84,8 @@ src/main/java/tech/hearth/crypto/
   Slip10.java          SLIP-0010 ed25519 hierarchical derivation
   Bls.java             BLS12-381 key derivation (EIP-2333 / EIP-2334)
   BlsKey.java          BLS12-381 signing / aggregation / verify (blst)
-  SigningKey.java      Ed25519 signing key (role-typed); toX25519() for the HPKE recipient key
+  SigningKey.java      Ed25519 signing key (role-typed): seed, expanded or scalar import;
+                       toX25519() for the HPKE recipient key
   VrfKey.java          Ed25519 VRF key (role-typed; no EdDSA sign)
   Ed25519.java         signature verification + VRF scalar helpers
   Ecvrf.java           RFC 9381 ECVRF-EDWARDS25519-SHA512-TAI
@@ -108,6 +109,40 @@ src/test/java/tech/hearth/crypto/HpkeVectorsTest.java     RFC 9180 A.1/A.2 on bo
 src/test/java/tech/hearth/crypto/ApiKeyEnvelopeTest.java  envelope round-trip / tamper / expiry
 src/test/java/tech/hearth/attestation/TdxQuoteTest.java   verifies a real captured miner quote end to end
 ```
+
+## Importing a signing key
+
+`SigningKey` is one type however the key was produced: derived from a mnemonic, imported
+from an expanded key, or imported from a bare scalar. Signing, the address, and export are
+the same call in every case — see
+[Signing keys](../README.md#signing-keys) for the format and the reasoning.
+
+```java
+// from a mnemonic, via the key tree
+SigningKey key = KeyTree.signingKey(Bip39.toSeed(mnemonic, ""), 0);
+
+// from a bare 32-byte scalar — what a vanity-address generator emits
+SigningKey key = SigningKey.fromScalar(scalar);
+
+// from scalar || noncePrefix, when the generator supplies its own CSPRNG prefix
+SigningKey key = SigningKey.fromExpandedKey(expanded);
+
+// identical from here on, whichever of the three built it
+byte[] sig = key.sign(txBytes);
+String address = key.toAddress().toBech32(Address.MAINNET_HRP);
+byte[] raw = key.toExpandedKey();        // scalar[32] || noncePrefix[32]
+```
+
+The only thing that depends on the key material rather than on provenance is
+`toX25519()` (the HPKE recipient conversion), which needs a clamped scalar: every
+seed-derived key qualifies, including after a round trip through `toExpandedKey()`,
+while a scalar reached by point addition does not and the call throws rather than
+return a keypair whose halves disagree.
+
+`CryptoVectorsTest` pins that a seed key and the same key re-imported in expanded form
+produce **byte-identical** signatures, on both backends — the two take different internal
+paths (libsodium's native signer vs. the RFC 8032 steps over `CryptoBackend`'s scalar
+operations), and EdDSA being deterministic, "the same key" has to mean the same bytes.
 
 ## Sealing a secret to a public key
 

@@ -20,6 +20,50 @@ public final class Ed25519 {
         return backend.verifyDetached(signature, message, publicKey);
     }
 
+    /**
+     * RFC 8032 signing straight from an <em>expanded</em> secret (scalar + nonce
+     * prefix), for keys that have no seed behind them — see
+     * {@link SigningKey#fromExpandedKey(byte[])}.
+     *
+     * <p>libsodium's {@code crypto_sign_detached} cannot be used here: it takes
+     * the 64-byte {@code seed || publicKey} form and re-derives the scalar by
+     * hashing the seed, which an expanded key does not have. So the RFC 8032
+     * §5.1.6 steps are spelled out over {@link CryptoBackend}'s scalar and group
+     * operations, which both backends implement identically.
+     *
+     * <p>{@code scalar} is used verbatim — it is <b>not</b> clamped and need not
+     * be reduced mod L (a seed-derived scalar never is: clamping sets bit 254,
+     * putting it above L). Every step below is mod L, so both forms sign the
+     * same and produce byte-identical signatures.
+     */
+    static byte[] signWithScalar(byte[] message, byte[] scalar, byte[] prefix, byte[] publicKey,
+                                 CryptoBackend backend) {
+        byte[] r = backend.scalarReduce(backend.sha512(concat(prefix, message)));   // r = H(prefix ‖ M) mod L
+        byte[] rB = backend.scalarmultBaseNoclamp(r);                               // R = [r]B
+        byte[] k = backend.scalarReduce(backend.sha512(concat(rB, publicKey, message))); // k = H(R ‖ A ‖ M) mod L
+        byte[] s = backend.scalarAdd(r, backend.scalarMul(k, scalar));              // S = r + k*a mod L
+        return concat(rB, s);
+    }
+
+    /** The public key A = [a]B for a secret scalar, used verbatim (no clamping). */
+    static byte[] publicKeyFromScalar(byte[] scalar, CryptoBackend backend) {
+        return backend.scalarmultBaseNoclamp(scalar);
+    }
+
+    private static byte[] concat(byte[]... parts) {
+        int len = 0;
+        for (byte[] part : parts) {
+            len += part.length;
+        }
+        byte[] out = new byte[len];
+        int off = 0;
+        for (byte[] part : parts) {
+            System.arraycopy(part, 0, out, off, part.length);
+            off += part.length;
+        }
+        return out;
+    }
+
     /** RFC 8032 secret scalar: clamp(SHA-512(seed)[0..32]). Used by ECVRF. */
     static byte[] secretScalar(byte[] seed, CryptoBackend backend) {
         byte[] a = Arrays.copyOfRange(backend.sha512(seed), 0, 32);

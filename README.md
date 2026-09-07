@@ -20,6 +20,12 @@ addresses — cross-checked in each test suite):
 This document describes the language-independent design; see each subproject's README for
 build/run instructions.
 
+> **Parity status.** Java and Rust implement the address encoding and the seedless key
+> imports described below, and pin the same vectors. Go, Python and TypeScript still emit
+> the older `hrthm`/`hrtht` address form with a `0x00` version byte and have no seedless
+> import; aligning them is pending. Until then the byte-for-byte claim holds for all three
+> across everything except addresses and key import.
+
 Each implementation embeds its own copy of the immutable BIP-39 English wordlist (Go's
 `go:embed` can't cross directories or follow symlinks, so a single shared file isn't
 practical). Drift is prevented by a checksum guard: every suite asserts the wordlist's
@@ -70,27 +76,96 @@ proof of possession. The other four implementations remain derivation-only.
 ## Addresses
 
 ```
-address = Bech32m(hrp, versionByte(0x00) || SHA-256(publicKey)[0..20])
+address = Bech32m(hrp, SHA-256(publicKey)[0..20])
 ```
 
-- **Bech32m** (BIP-350): strong typo detection, human-readable prefix, lowercase, QR-friendly.
 - **SHA-256, truncated to 20 bytes**: standard 160-bit account id, reproducible across
-  implementations.
-- **Version byte** gives future key-type agility (Ed25519 = `0x00`).
-- **Per-network HRP**: `hrthm` (mainnet), `hrtht` (testnet). Example:
-  `hrthm1qqh3nv88tllmfh43ldjelfkxn4dw96mmhcj9u36h`.
-
-The account bytes are the same across networks; only the prefix differs.
+  implementations. These 20 bytes *are* the identity — the transaction recipient field, state
+  keys, and address equality all use them. There is no version byte; an address is the account
+  hash and nothing else.
+- **Bech32m** (BIP-350): strong typo detection, human-readable prefix, lowercase, QR-friendly.
+- **The network is not part of the identity.** It only selects the HRP when a string is
+  rendered or parsed: `hrth` (mainnet), `thrth` (testnet). One account is one address on every
+  network, so the HRP is supplied at that boundary rather than stored in the address. Example,
+  for the demo signing key: `hrth19uvmpe6ll76dav0mvk06d35att3wk7a7gm8xwm` and
+  `thrth19uvmpe6ll76dav0mvk06d35att3wk7a7vvkkh7` — 43 characters, same account.
 
 ### Networks and replay protection
 
-The HRP is a **UX guard** (a wallet refuses a `hrtht…` address on mainnet) — it is **not**
+The HRP is a **UX guard** (a wallet refuses a `thrth…` address on mainnet) — it is **not**
 replay protection, because a replay attacker rebroadcasts signed bytes rather than typing an
 address. Replay protection belongs in the signed transaction, and is the plan for the tx type:
 
 - **cross-network replay** → include a network id / domain-separation tag in the signed
   payload (à la EIP-155 / Cosmos `chain_id`), so a mainnet signature fails on testnet;
 - **same-network replay** → a per-account nonce (account model) or spent-UTXO set.
+
+## Signing keys
+
+A signing key is the pair EdDSA actually uses: the secret scalar `a` and the nonce prefix. A
+seed is a compact way to *generate* that pair by hashing (RFC 8032 §5.1.5), not a different
+kind of key. So a key derived from a mnemonic and a key imported from a raw scalar are the
+same type, sign through the same call, and are indistinguishable to a verifier — the flow from
+key to signature does not branch on where the key came from.
+
+| Entry | Takes |
+|---|---|
+| `fromSeed` | a 32-byte seed — the SLIP-0010 node key the key tree derives from a mnemonic |
+| `fromExpandedKey` | `scalar[32] ‖ noncePrefix[32]` |
+| `fromScalar` | `scalar[32]`; the prefix is derived as `SHA-512(DST ‖ scalar)[32..64]`, with DST = `hearth-chain/ed25519-scalar-expand/v1` |
+
+Export is the mirror of the second: `toExpandedKey()` returns `scalar ‖ noncePrefix`. Keys move
+as bytes — there is no text encoding for a secret key, and reading one in from a file, a config
+value or an operator's paste is the caller's business.
+
+The seedless entries exist because some keys **cannot** have a seed: no seed hashes to a
+chosen scalar. The motivating case is vanity-address search, where candidates are walked by
+repeated point addition (`A_i = A_{i-1} + B`) — one addition per candidate instead of a full
+scalar multiplication, roughly two orders of magnitude cheaper — which produces a scalar
+directly. A generator like that should emit the bare 32-byte scalar and let `fromScalar`
+expand it, which is what [`hearth-vanity`](rust/README.md#vanity-addresses) does.
+
+What a seedless key cannot do is anything that needs the seed *as such*: it has no mnemonic
+and no SLIP-0010 path, so it cannot produce the account's sibling VRF key (which lives at a
+different path anyway). Signing, addresses and export are identical.
+
+An imported scalar is used **verbatim** — not clamped, and not required to be reduced mod L.
+Clamping guards X25519's cofactor and a ladder's timing, not the signature equation, and a
+scalar reached by point addition has no reason to satisfy it; conversely a seed-derived scalar
+always sits above L, so demanding canonical scalars would stop a seed key round-tripping at
+all. Rejected: a scalar with the high bit set, or one that is zero mod L (its public key is
+the identity point, which verification rejects for every signature).
+
+The one operation that follows the scalar's shape rather than the key's provenance is the
+ed25519→X25519 conversion used for HPKE: it needs a clamped scalar and refuses otherwise,
+because X25519 re-clamps whatever secret it is handed and an unclamped one would silently act
+as a *different* key from the public key returned with it. A seed-derived key therefore still
+converts after a round trip through the expanded form.
+
+**The nonce prefix is secret key material, not a label.** EdDSA's per-signature nonce is
+`r = SHA-512(prefix ‖ message)`: anyone who learns the prefix learns `r` for every message the
+key signs and recovers `a` from a single signature as `(S − r)/k`. A generator emitting
+expanded keys must draw the prefix from a CSPRNG — never from the search counter, the
+candidate index, or anything else a stranger can guess. `fromScalar` removes that trap by
+deriving the prefix from the secret scalar itself.
+
+### Vanity addresses
+
+[`rust/`](rust/README.md#vanity-addresses) ships `hearth-vanity`, a grinder for addresses
+starting with a chosen string:
+
+```bash
+cd rust && cargo run --release --features vanity --bin hearth-vanity -- --prefix hearth
+# hrth1hearthkcfl46zs56n6nrmhrksr5c7g6zyq0khz
+```
+
+It walks scalars rather than seeds and batches the field inversion across a window of
+candidates, reaching ~6.7 M keys/s per core — 64 M/s on a 13-thread M4-class machine, where a
+6-character pattern lands in seconds and an 8-character one in about five hours. Since an
+address carries no version byte, all 32 characters after the separator are free and *n*
+characters cost `32^n`. Every hit is re-derived through the ordinary library path before it is
+reported, and starting scalars come from the OS CSPRNG — the `profanity` generator's 32-bit
+seed is what made every address it produced brute-forceable.
 
 ## The sample app
 
@@ -114,7 +189,9 @@ This is a crypto foundation sketch, not a chain yet. Natural next pieces:
 transaction & block types with a domain-separated signing envelope
 (`sign(SHA-512(DST ‖ networkId ‖ bytes))`), a leader-election rule over `beta`, porting BLS
 finality signing/aggregation/PoP (a `blst`-equivalent pairing backend) from Java to the other
-four implementations, a P2P layer, and storage.
+four implementations, a P2P layer, and storage. On the parity side: porting the address
+encoding and [seedless key imports](#signing-keys) to Go, Python and TypeScript, which Java
+and Rust already share.
 
 HPKE (`Hpke`/`hpke` + `ApiKeyEnvelope`/`apikeyenvelope`) now ships in all five implementations,
 each checked against the same RFC 9180 A.1/A.2 vectors — the byte-for-byte parity claim above

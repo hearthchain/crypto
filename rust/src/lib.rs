@@ -17,6 +17,8 @@ pub mod hpke;
 pub mod keytree;
 pub mod primitives;
 pub mod slip10;
+#[cfg(feature = "vanity")]
+pub mod vanity;
 pub mod x25519;
 
 /// Errors returned by fallible operations.
@@ -28,6 +30,8 @@ pub enum Error {
     Path(String),
     /// An input had the wrong length.
     Length(&'static str),
+    /// A vanity-search pattern was not usable; carries the reason.
+    Pattern(String),
     /// An HPKE / X25519 / API-key-envelope operation was rejected: a
     /// small-order DH input, an AEAD authentication failure, a malformed or
     /// expired envelope, or an invalid API key shape.
@@ -37,7 +41,9 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Error::Mnemonic(m) | Error::Path(m) | Error::Crypto(m) => write!(f, "{m}"),
+            Error::Mnemonic(m) | Error::Path(m) | Error::Crypto(m) | Error::Pattern(m) => {
+                write!(f, "{m}")
+            }
             Error::Length(m) => write!(f, "{m}"),
         }
     }

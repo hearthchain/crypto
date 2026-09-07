@@ -153,6 +153,192 @@ class CryptoVectorsTest {
                 identity, b));
     }
 
+    // --- Seedless signing keys -------------------------------------------
+
+    private static final String RFC8032_SEED =
+            "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+
+    private static byte[] utf8(String s) {
+        return s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A seed key exported to expanded form and re-imported is the same key — same
+     * public key, same address, and byte-identical signatures, even though the two
+     * now sign by different internal paths (the backend's native signer vs.
+     * {@code Ed25519.signWithScalar}). EdDSA is deterministic, so "same key" here
+     * means literally the same bytes out.
+     */
+    @ParameterizedTest
+    @MethodSource("backends")
+    void expandedKeyRoundTripsFromSeed(CryptoBackend b) {
+        SigningKey seedKey = SigningKey.fromSeed(hx(RFC8032_SEED), b);
+        byte[] expanded = seedKey.toExpandedKey();
+        SigningKey imported = SigningKey.fromExpandedKey(expanded, b);
+
+        assertArrayEquals(seedKey.publicKey(), imported.publicKey());
+        assertEquals(seedKey.toAddress(), imported.toAddress());
+        assertArrayEquals(expanded, imported.toExpandedKey());
+
+        byte[] msg = utf8("hello hearth");
+        assertArrayEquals(seedKey.sign(msg, b), imported.sign(msg, b));
+        assertTrue(Ed25519.verify(imported.sign(msg, b), msg, imported.publicKey(), b));
+
+        // The exported scalar is RFC 8032's clamped one: bit 254 set, low 3 bits
+        // clear — so it is above L, i.e. import must accept non-reduced scalars or
+        // a seed key could not round-trip at all.
+        assertEquals(0x40, expanded[31] & 0x40);
+        assertEquals(0, expanded[0] & 0x07);
+    }
+
+    /**
+     * The vanity-search premise: a generator walks candidates by repeated point
+     * addition, {@code A_i = A_{i-1} + B} (i.e. {@code a_i = a_{i-1} + 1}), which
+     * is far cheaper per candidate than a scalar multiplication but produces a
+     * scalar with no seed behind it and no clamping bits. Such a key must import,
+     * sign, and verify like any other.
+     */
+    @ParameterizedTest
+    @MethodSource("backends")
+    void keyFromIncrementedScalar(CryptoBackend b) {
+        SigningKey previous = SigningKey.fromSeed(hx(RFC8032_SEED), b);
+        byte[] one = new byte[32];
+        one[0] = 1;
+        byte[] scalar = b.scalarAdd(java.util.Arrays.copyOfRange(previous.toExpandedKey(), 0, 32), one);
+
+        SigningKey key = SigningKey.fromScalar(scalar, b);
+
+        // Reduced mod L, the scalar no longer satisfies clamping; import must not care.
+        assertNotEquals(0x40, scalar[31] & 0x40);
+
+        // The public key is exactly the point addition the generator performs, so a
+        // generator can match candidate addresses without ever building a key.
+        assertArrayEquals(b.pointAdd(previous.publicKey(), b.scalarmultBaseNoclamp(one)).orElseThrow(),
+                key.publicKey());
+
+        byte[] msg = utf8("signed by a ground key");
+        assertTrue(Ed25519.verify(key.sign(msg, b), msg, key.publicKey(), b));
+        assertFalse(Ed25519.verify(key.sign(msg, b), msg, previous.publicKey(), b));
+    }
+
+    /**
+     * A bare scalar is a complete key: the prefix is derived from it, so 32 bytes
+     * reconstruct the identical key anywhere, and it signs like any other key.
+     */
+    @ParameterizedTest
+    @MethodSource("backends")
+    void scalarImportIsDeterministicAndSignsLikeAnyKey(CryptoBackend b) {
+        byte[] scalar = b.scalarReduce(b.sha512(utf8("a scalar a grinder found")));
+
+        SigningKey key = SigningKey.fromScalar(scalar, b);
+        assertArrayEquals(key.toExpandedKey(), SigningKey.fromScalar(scalar.clone(), b).toExpandedKey());
+
+        // The derived prefix is the documented DST construction, and is not any
+        // seed's prefix — this is not a way back to a mnemonic.
+        byte[] dst = SigningKey.SCALAR_EXPAND_DST.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] input = new byte[dst.length + 32];
+        System.arraycopy(dst, 0, input, 0, dst.length);
+        System.arraycopy(scalar, 0, input, dst.length, 32);
+        assertArrayEquals(java.util.Arrays.copyOfRange(b.sha512(input), 32, 64),
+                java.util.Arrays.copyOfRange(key.toExpandedKey(), 32, 64));
+
+        // Signing is the uniform flow: same call, same verification, whatever built it.
+        byte[] msg = utf8("a transaction");
+        assertTrue(Ed25519.verify(key.sign(msg, b), msg, key.publicKey(), b));
+        assertArrayEquals(key.sign(msg, b),
+                SigningKey.fromExpandedKey(key.toExpandedKey(), b).sign(msg, b));
+    }
+
+    /** Pinned seedless-key vectors — the values the other four builds must match. */
+    @ParameterizedTest
+    @MethodSource("backends")
+    void seedlessKeysPinned(CryptoBackend b) {
+        byte[] expanded = hx("836b2194dc19add1d9433a016dcf9004236ca1dba85d93e1394679e51cd5d70f"
+                + "fceac21612dc9d313d814e61fb2b29b5a62b70ec304ddb35065e8d801a01f4c6");
+        SigningKey key = SigningKey.fromExpandedKey(expanded, b);
+
+        assertEquals("4fbb4b65d86e26261b9c36fb892274239506c6fcc3baa6d145979beaf3622eb5", hex(key.publicKey()));
+        assertEquals("hrth18x0mux45uy7d4lhvcna7net8zcmurgrcvaz0x8", key.toAddress().toBech32(Address.MAINNET_HRP));
+        assertEquals("thrth18x0mux45uy7d4lhvcna7net8zcmurgrcg2nllz", key.toAddress().toBech32(Address.TESTNET_HRP));
+        assertEquals("99991ffd3839e4281ea7c141f1b3914aa7640e7ecaf84c70f78866944eb75602"
+                        + "54441f3595766cdb52358612acb805f7c712f72a0f836d815ed208eedacddd0c",
+                hex(key.sign(utf8("hello hearth"), b)));
+
+        // The same scalar imported bare: same public key and address, prefix derived.
+        SigningKey fromScalar = SigningKey.fromScalar(java.util.Arrays.copyOfRange(expanded, 0, 32), b);
+        assertArrayEquals(key.publicKey(), fromScalar.publicKey());
+        assertEquals(SCALAR_IMPORT_EXPANDED, hex(fromScalar.toExpandedKey()));
+    }
+
+    private static final String SCALAR_IMPORT_EXPANDED =
+            "836b2194dc19add1d9433a016dcf9004236ca1dba85d93e1394679e51cd5d70f"
+            + "77e9580f2a6acea97d2a19731a144407c24f1a86356844fe0fe8ed5ea8fa1bdd";
+
+    /** Export/import is byte-level and lossless, and the key never prints itself. */
+    @ParameterizedTest
+    @MethodSource("backends")
+    void expandedKeyExportRoundTrip(CryptoBackend b) {
+        SigningKey seedKey = SigningKey.fromSeed(hx(RFC8032_SEED), b);
+        byte[] exported = seedKey.toExpandedKey();
+        SigningKey imported = SigningKey.fromExpandedKey(exported, b);
+
+        assertEquals(SigningKey.EXPANDED_KEY_BYTES, exported.length);
+        assertArrayEquals(seedKey.publicKey(), imported.publicKey());
+        assertArrayEquals(exported, imported.toExpandedKey());
+
+        // The export is a copy: mutating it must not reach into the key.
+        java.util.Arrays.fill(exported, (byte) 0);
+        assertArrayEquals(imported.toExpandedKey(), seedKey.toExpandedKey());
+
+        // toString must not leak the secret.
+        assertFalse(seedKey.toString().contains(hex(seedKey.toExpandedKey())));
+    }
+
+    @ParameterizedTest
+    @MethodSource("backends")
+    void seedlessImportRejectsMalformedInput(CryptoBackend b) {
+        assertThrows(IllegalArgumentException.class, () -> SigningKey.fromExpandedKey(new byte[63], b));
+        assertThrows(IllegalArgumentException.class, () -> SigningKey.fromExpandedKey(new byte[65], b));
+        assertThrows(IllegalArgumentException.class, () -> SigningKey.fromScalar(new byte[31], b));
+
+        // A zero scalar gives the identity public key, which Ed25519.verify rejects
+        // for every signature — the key would be unusable, so reject it here.
+        assertThrows(IllegalArgumentException.class, () -> SigningKey.fromExpandedKey(new byte[64], b));
+        assertThrows(IllegalArgumentException.class, () -> SigningKey.fromScalar(new byte[32], b));
+
+        // L itself, and any multiple of it, is also zero mod L.
+        byte[] orderL = hx("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+        assertThrows(IllegalArgumentException.class, () -> SigningKey.fromScalar(orderL, b));
+
+        // Above the 255-bit range the group operations accept.
+        byte[] highBit = new byte[32];
+        highBit[0] = 1;
+        highBit[31] = (byte) 0x80;
+        assertThrows(IllegalArgumentException.class, () -> SigningKey.fromScalar(highBit, b));
+
+    }
+
+    /**
+     * X25519 conversion follows the scalar's shape, not the key's provenance: a
+     * seed key still converts after a round trip through the expanded form, while
+     * an unclamped scalar has no correct conversion and must refuse rather than
+     * return a keypair whose halves disagree.
+     */
+    @ParameterizedTest
+    @MethodSource("backends")
+    void x25519ConversionFollowsTheScalarNotTheProvenance(CryptoBackend b) {
+        SigningKey seedKey = SigningKey.fromSeed(hx(RFC8032_SEED), b);
+        byte[] expected = Ed25519.secretScalar(hx(RFC8032_SEED), b);
+        assertArrayEquals(expected, seedKey.toX25519(b).secretKey());
+
+        SigningKey reimported = SigningKey.fromExpandedKey(seedKey.toExpandedKey(), b);
+        assertArrayEquals(expected, reimported.toX25519(b).secretKey());
+        assertArrayEquals(seedKey.toX25519(b).publicKey(), reimported.toX25519(b).publicKey());
+
+        SigningKey unclamped = SigningKey.fromScalar(b.scalarReduce(b.sha512(utf8("unclamped"))), b);
+        assertThrows(IllegalStateException.class, () -> unclamped.toX25519(b));
+    }
+
     // --- EIP-2333 --------------------------------------------------------
 
     private record BlsVec(String seed, String master, long index, String child) {}
