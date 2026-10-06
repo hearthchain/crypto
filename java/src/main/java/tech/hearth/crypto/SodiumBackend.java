@@ -88,6 +88,8 @@ public final class SodiumBackend implements CryptoBackend {
                 System.getenv().getOrDefault("HEARTH_SODIUM_LIB", ""),
                 "libsodium.dylib",
                 "libsodium.so.23",
+                // Windows' own search order (application directory, system directories, PATH) finds it by name
+                "libsodium.dll",
                 "libsodium.so",
                 "/opt/homebrew/lib/libsodium.dylib",
                 "/usr/local/lib/libsodium.dylib",
@@ -104,7 +106,8 @@ public final class SodiumBackend implements CryptoBackend {
         }
         throw new UnsatisfiedLinkError(
                 "Could not load libsodium. Install it (macOS: `brew install libsodium`, "
-                        + "Debian/Ubuntu: `apt install libsodium23`) or set HEARTH_SODIUM_LIB.");
+                        + "Debian/Ubuntu: `apt install libsodium23`, Windows: libsodium.dll on PATH) "
+                        + "or set HEARTH_SODIUM_LIB.");
     }
 
     private MethodHandle handle(String name, FunctionDescriptor desc) {
